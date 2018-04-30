@@ -1,5 +1,5 @@
 (ns metabase.models.collection
-  (:refer-clojure :exclude [ancestors])
+  (:refer-clojure :exclude [ancestors descendants])
   (:require [clojure
              [data :as data]
              [string :as str]]
@@ -153,7 +153,7 @@
 ;; "Effective" Location Paths are location paths for Collections that exclude the IDs of Collections the current user
 ;; isn't allowed to see.
 ;;
-;; For example, if a Collection has a `location` of `/10/20/30/`, and the Current User is allowed to see Collections
+;; For example, if a Collection has a `location` of `/10/20/30/`, and the current User is allowed to see Collections
 ;; 10 and 30, but not 20, we will show them an "effective" location path of `/10/30/`. This is used for things like
 ;; breadcrumbing in the frontend.
 
@@ -193,21 +193,123 @@
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
-;;; |                         Nested Collections: Ancestors, Descendants, Child Collections                          |
+;;; |                         Nested Collections: Ancestors, Childrens, Child Collections                          |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
 (s/defn ^:hydrate ancestors :- [CollectionInstance]
+  "Fetch ancestors (parent, grandparent, etc.) of a `collection`. These are returned in order starting with the
+  highest-level (e.g. most distant) ancestor."
   [{:keys [location]}]
   (when-let [ancestor-ids (seq (location-path->ids location))]
     (db/select [Collection :name :id] :id [:in ancestor-ids])))
 
+(s/defn effective-ancenstors :- [CollectionInstance]
+  "Fetch the ancestors of a `collection`, filtering out any ones the current User isn't allowed to see. This is used
+  in the UI to power the 'breadcrumb' path to the location of a given Collection. For example, suppose we have four
+  Collections, nested like:
+
+    A > B > C > D
+
+  The ancestors of D are:
+
+    A > B > C
+
+  If the current User is allowed to see A and C, but not B, `effective-ancestors` of D will be:
+
+    A > C
+
+  Thus the existence of C will be kept hidden from the current User, and for all intents and purposes the current User
+  can effectively treat A as the parent of C."
+  {:hydrate :effective_ancestors}
+  [collection]
+  (filter i/can-read? (ancestors collection)))
+
 (s/defn children-location :- LocationPath
-  [{:keys [location], :as collection}]
+  "Given a `collection` return a location path that should match the `:location` value of all the children of the
+  Collection.
+
+     (children-location collection) ; -> \"/10/20/30/;
+
+     ;; To get children of this collection:
+     (db/select Collection :location \"/10/20/30/\")"
+  [{:keys [location], :as collection} :- su/Map]
   (str location (u/get-id collection) "/"))
 
-(defn children [collection]
-  {:hydrate :child_collections}
-  (set (db/select [Collection :id :name] :location (children-location collection))))
+(def ^:private Children
+  (s/both
+   CollectionInstance
+   {:children #{(s/recursive #'Children)}
+    s/Keyword s/Any}))
+
+(s/defn ^:private descendants :- #{Children}
+  "Return all descendants of a `collection`, including children, grandchildren, and so forth. This is done primarily
+  to power the `effective-children` feature below, and thus the descendants are returned in a hierarchy, rather than
+  as a flat set. e.g. results will be something like:
+
+       +-> B
+       |
+    A -+-> C -+-> D -> E
+              |
+              +-> F -> G
+
+  where each letter represents a Collection, and the arrows represent values of its respective `:children`
+  set."
+  [collection :- su/Map]
+  ;; first, fetch all the descendants of the `collection`, and build a map of location -> children. This will be used
+  ;; so we can fetch the immediate children of each Collection
+  (let [location->children (group-by :location (db/select [Collection :name :id :location]
+                                                 :location [:like (str (children-location collection) "%")]))
+        ;; Next, build a function to add children to a given `coll`. This function will recursively call itself to add
+        ;; children to each child
+        add-children       (fn add-children [coll]
+                             (let [children (get location->children (children-location coll))]
+                               (assoc coll :children (set (map add-children children)))))]
+    ;; call the `add-children` function we just built on the root `collection` that was passed in.
+    (-> (add-children collection)
+        ;; since this function will be used for hydration (etc.), return only the newly produced `:children`
+        ;; key
+        :children)))
+
+
+(s/defn effective-children ;; :- #{CollectionInstance}
+  "Return the descendants of a `collection` that should be presented to the current user as the children of this
+  Collection. This takes into account descendants that get filtered out when the current user can't see them. For
+  example, suppose we have some Collections with a hierarchy like this:
+
+       +-> B
+       |
+    A -+-> C -+-> D -> E
+              |
+              +-> F -> G
+
+   Suppose the current User can see A, B, E, F, and G, but not C, or D. The 'effective' children of A would be C and
+   E, and the current user would be presented with a hierarchy like:
+
+       +-> B
+       |
+    A -+-> E
+       |
+       +-> F -> G
+
+   You can think of this process as 'collapsing' the Collection hierarchy and removing nodes that aren't visible to
+   the current User. This needs to be done so we can give a User a way to navigate to nodes that are children of
+   Collections they cannot access; in the example above, E and F are such nodes."
+  {:hydrate :effective_children}
+  [collection :- su/Map]
+  ;; Hydrate `:children` if it's not already done
+  (-> (for [child (if (contains? collection :children)
+                    (:children collection)
+                    (descendants collection))]
+        ;; if we can read this `child` then we can go ahead and keep it as is. Discard its `children`, replace
+        ;; `location` with `effective_location`
+        (if (i/can-read? child)
+          (-> (assoc child :effective_location (effective-location-path child))
+              (dissoc :children :location))
+          ;; otherwise recursively call on each of the grandchildren. Make it a `vec` so flatten works on it
+          (vec (effective-children child))))
+      ;; since the results will be nested once for each recursive call, un-nest the results and convert back to a set
+      flatten
+      set))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -323,7 +425,9 @@
 ;;; -------------------------------------------------- Update Graph --------------------------------------------------
 
 (s/defn ^:private update-collection-permissions!
-  [group-id :- su/IntGreaterThanZero, collection-id :- su/IntGreaterThanZero, new-collection-perms :- CollectionPermissions]
+  [group-id             :- su/IntGreaterThanZero
+   collection-id        :- su/IntGreaterThanZero
+   new-collection-perms :- CollectionPermissions]
   ;; remove whatever entry is already there (if any) and add a new entry if applicable
   (perms/revoke-collection-permissions! group-id collection-id)
   (case new-collection-perms
@@ -331,7 +435,8 @@
     :read  (perms/grant-collection-read-permissions! group-id collection-id)
     :none  nil))
 
-(s/defn ^:private update-group-permissions! [group-id :- su/IntGreaterThanZero, new-group-perms :- GroupPermissionsGraph]
+(s/defn ^:private update-group-permissions!
+  [group-id :- su/IntGreaterThanZero, new-group-perms :- GroupPermissionsGraph]
   (doseq [[collection-id new-perms] new-group-perms]
     (update-collection-permissions! group-id collection-id new-perms)))
 
