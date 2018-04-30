@@ -1,4 +1,5 @@
 (ns metabase.models.collection-test
+  (:refer-clojure :exclude [ancestors descendants])
   (:require [expectations :refer :all]
             [metabase.api.common :refer [*current-user-permissions-set*]]
             [metabase.models
@@ -6,6 +7,7 @@
              [collection :as collection :refer [Collection]]
              [permissions :as perms]]
             [metabase.test.util :as tu]
+            [clojure.string :as str]
             [metabase.util :as u]
             [toucan.db :as db]
             [toucan.util.test :as tt]))
@@ -78,6 +80,66 @@
   (tt/with-temp Collection [collection]
     (db/update! Collection (u/get-id collection)
       :name "")))
+
+
+;;; +----------------------------------------------------------------------------------------------------------------+
+;;; |                                     Nested Collections Helper Fns & Macros                                     |
+;;; +----------------------------------------------------------------------------------------------------------------+
+
+(defn do-with-collection-hierarchy [a-fn]
+  (tt/with-temp* [Collection [a {:name "A"}]
+                  Collection [b {:name "B", :location (collection/location-path a)}]
+                  Collection [c {:name "C", :location (collection/location-path a)}]
+                  Collection [d {:name "D", :location (collection/location-path a c)}]
+                  Collection [e {:name "E", :location (collection/location-path a c d)}]
+                  Collection [f {:name "F", :location (collection/location-path a c)}]
+                  Collection [g {:name "G", :location (collection/location-path a c f)}]]
+    (a-fn {:a a, :b b, :c c, :d d, :e e, :f f, :g g})))
+
+(defmacro with-collection-hierarchy
+  "Run `body` with a hierarchy of Collections that looks like:
+
+        +-> B
+        |
+     A -+-> C -+-> D -> E
+               |
+               +-> F -> G
+
+     Bind only the collections you need by using `:keys`:
+
+     (with-collection-hierarchy [{:keys [a b c]}]
+       ...)"
+  {:style/indent 1}
+  [[collections-binding] & body]
+  `(do-with-collection-hierarchy (fn [~collections-binding] ~@body)))
+
+(defmacro with-current-user-perms-for-collections
+  "Run `body` with the current User permissions for `collections-or-ids`.
+
+     (with-current-user-perms-for-collections [a b c]
+       ...)"
+  {:style/indent 1}
+  [collections-or-ids & body]
+  `(binding [*current-user-permissions-set* (atom #{~@(for [collection-or-id collections-or-ids]
+                                                        `(perms/collection-read-path ~collection-or-id))})]
+     ~@body))
+
+(defn location-path-ids->names
+  "Given a Collection location `path` replace all the IDs with the names of the Collections they represent. Done to make
+  it possible to compare Collection location paths in tests without having to know the randomly-generated IDs."
+  [path]
+  ;; split the path into IDs and then fetch a map of ID -> Name for each ID
+  (let [ids     (collection/location-path->ids path)
+        id->name (when (seq ids)
+                   (db/select-field->field :id :name Collection :id [:in ids]))]
+    (println "id->name:" id->name) ; NOCOMMIT
+    ;; now loop through each ID and replace the ID part like (ex. /10/) with a name (ex. /A/)
+    (loop [path path, [id & more] ids]
+      (if-not id
+        path
+        (recur
+         (str/replace path (re-pattern (str "/" id "/")) (str "/" (id->name id) "/"))
+         more)))))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -231,143 +293,169 @@
     (db/update! Collection (u/get-id collection) :location (collection/location-path (nonexistent-collection-id)))))
 
 
-(defmacro with-a-family-of-collections
-  {:style/indent 1}
-  [[grandparent-binding parent-binding child-binding] & body]
-  `(tt/with-temp* [Collection [grandparent# {:name "Grandparent"}]
-                   Collection [parent#      {:name "Parent", :location (collection/location-path grandparent#)}]
-                   Collection [child#       {:name "Child",  :location (collection/location-path grandparent# parent#)}]]
-     (let [~grandparent-binding grandparent#
-           ~parent-binding      parent#
-           ~child-binding       child#]
-       ~@body)))
-
 ;; When we delete a Collection do its descendants get deleted as well?
+;;
+;;    +-> B
+;;    |
+;; x -+-> C -+-> D -> E     ===>     x
+;;           |
+;;           +-> F -> G
 (expect
   0
-  (with-a-family-of-collections [grandparent parent child]
-    (db/delete! Collection :id (u/get-id grandparent))
-    (db/count Collection :id [:in (map u/get-id [grandparent parent child])])))
+  (with-collection-hierarchy [{:keys [a b c d e f g]}]
+    (db/delete! Collection :id (u/get-id a))
+    (db/count Collection :id [:in (map u/get-id [a b c d e f g])])))
 
-;; ...put parents should be untouched
+;; ...put parents & siblings should be untouched
+;;
+;;    +-> B                             +-> B
+;;    |                                 |
+;; A -+-> x -+-> D -> E     ===>     A -+
+;;           |
+;;           +-> F -> G
 (expect
-  1
-  (with-a-family-of-collections [grandparent parent child]
-    (db/delete! Collection :id (u/get-id parent))
-    (db/count Collection :id [:in (map u/get-id [grandparent parent child])])))
+  2
+  (with-collection-hierarchy [{:keys [a b c d e f g]}]
+    (db/delete! Collection :id (u/get-id c))
+    (db/count Collection :id [:in (map u/get-id [a b c d e f g])])))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                              Nested Collections: Ancestors & Effective Ancestors                               |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
+(defn- ancestors [collection]
+  (map :name (#'collection/ancestors collection)))
+
 ;; Can we hydrate `ancestors` the way we'd hope?
 (expect
-  #{#metabase.models.collection.CollectionInstance{:id true, :name "Grandparent"}
-    #metabase.models.collection.CollectionInstance{:id true, :name "Parent"}}
-  (with-a-family-of-collections [_ _ collection]
-    (set (for [ancestor (collection/ancestors collection)]
-           (update ancestor :id integer?)))))
+  ["A" "C"]
+  (with-collection-hierarchy [{:keys [d]}]
+    (ancestors d)))
+
+(expect
+  ["A" "C" "D"]
+  (with-collection-hierarchy [{:keys [e]}]
+    (ancestors e)))
+
+;; trying it on C should give us only A
+(expect
+  ["A"]
+  (with-collection-hierarchy [{:keys [c]}]
+    (ancestors c)))
+
+
+;;; ---------------------------------------------- Effective Ancestors -----------------------------------------------
+
+(defn- effective-ancestors [collection]
+  (map :name (collection/effective-ancestors collection)))
+
+;; For D: if we don't have permissions for C, we should only see A
+(expect
+  ["A"]
+  (with-collection-hierarchy [{:keys [a d]}]
+    (with-current-user-perms-for-collections [a d]
+      (effective-ancestors d))))
+
+;; For D: if we don't have permissions for A, we should only see C
+(expect
+  ["C"]
+  (with-collection-hierarchy [{:keys [c d]}]
+    (with-current-user-perms-for-collections [c d]
+      (effective-ancestors d))))
+
+;; For D: if we have perms for all ancestors we should see them all
+(expect
+  ["A" "C"]
+  (with-collection-hierarchy [{:keys [a c d]}]
+    (with-current-user-perms-for-collections [a c d]
+      (effective-ancestors d))))
+
+;; For D: if we have permissions for no ancestors, we should see nothing
+(expect
+  []
+  (with-collection-hierarchy [{:keys [a c d]}]
+    (with-current-user-perms-for-collections [d]
+      (effective-ancestors d))))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
-;;; |                            Nested Collections: Descendants & Effective Descendants                             |
+;;; |                              Nested Collections: Descendants & Effective Children                              |
 ;;; +----------------------------------------------------------------------------------------------------------------+
-
-(defn- do-with-collection-hierarchy [a-fn]
-  (tt/with-temp* [Collection [a {:name "A"}]
-                  Collection [b {:name "B", :location (collection/location-path a)}]
-                  Collection [c {:name "C", :location (collection/location-path a)}]
-                  Collection [d {:name "D", :location (collection/location-path a c)}]
-                  Collection [e {:name "E", :location (collection/location-path a c d)}]
-                  Collection [f {:name "F", :location (collection/location-path a c)}]
-                  Collection [g {:name "G", :location (collection/location-path a c f)}]]
-    (a-fn {:a a, :b b, :c c, :d d, :e e, :f f, :g g})))
-
-(defmacro ^:private with-collection-hierarchy
-  "Run `body` with a hierarchy of Collections that looks like:
-
-        +-> B
-        |
-     A -+-> C -+-> D -> E
-               |
-               +-> F -> G
-
-     Bind only the collections you need by using `:keys`:
-
-     (with-collection-hierarchy [{:keys [a b c]}]
-       ...)"
-  {:style/indent 1}
-  [[collections-binding] & body]
-  `(do-with-collection-hierarchy (fn [~collections-binding] ~@body)))
-
 
 ;;; -------------------------------------------------- Descendants ---------------------------------------------------
 
-(defn- remove-ids-and-locations
-  "Recursively remove the `:id` and `:location` from a set of `collections`. Make sure all Collections are plain maps
-  instead of `CollectionInstance`s."
+(defn- format-descendants
+  "Put the results of `collection/descendants` in a nice format that makes it easy to write our tests."
   [collections]
   (set (for [collection collections]
          (-> (into {} collection)
-             (dissoc :id :location)
-             (update :children (comp set (partial remove-ids-and-locations)))))))
+             (update :id integer?)
+             (update :location location-path-ids->names)
+             (update :children (comp set (partial format-descendants)))))))
+
+(defn- descendants [collection]
+  (-> (#'collection/descendants collection)
+      format-descendants))
 
 ;; make sure we can fetch the descendants of a Collection in the hierarchy we'd expect
 (expect
-  #{{:name "B", :children #{}}
-    {:name "C",:children #{{:name "F", :children #{{:name "G", :children #{}}}}
-                           {:name "D", :children #{{:name "E", :children #{}}}}}}}
-  (-> (with-collection-hierarchy [{:keys [a]}]
-        (#'collection/descendants a))
-      remove-ids-and-locations))
+  #{{:name "B", :id true, :location "/A/", :children #{}}
+    {:name     "C"
+     :id       true
+     :location "/A/"
+     :children #{{:name     "D"
+                  :id       true
+                  :location "/A/C/"
+                  :children #{{:name "E", :id true, :location "/A/C/D/", :children #{}}}}
+                 {:name     "F"
+                  :id       true
+                  :location "/A/C/"
+                  :children #{{:name "G", :id true, :location "/A/C/F/", :children #{}}}}}}}
+  (with-collection-hierarchy [{:keys [a]}]
+    (descendants a)))
 
 ;; try for one of the children, make sure we get just that subtree
 (expect
   #{}
-  (-> (with-collection-hierarchy [{:keys [b]}]
-        (#'collection/descendants b))
-      remove-ids-and-locations))
+  (with-collection-hierarchy [{:keys [b]}]
+    (descendants b)))
 
 ;; try for the other child, we should get just that subtree!
 (expect
-  #{{:name "F", :children #{{:name "G", :children #{}}}}
-    {:name "D", :children #{{:name "E", :children #{}}}}}
-  (-> (with-collection-hierarchy [{:keys [c]}]
-        (#'collection/descendants c))
-      remove-ids-and-locations))
+  #{{:name     "D"
+     :id       true
+     :location "/A/C/"
+     :children #{{:name "E", :id true, :location "/A/C/D/", :children #{}}}}
+    {:name     "F"
+     :id       true
+     :location "/A/C/"
+     :children #{{:name "G", :id true, :location "/A/C/F/", :children #{}}}}}
+  (with-collection-hierarchy [{:keys [c]}]
+    (descendants c)))
 
 ;; try for a grandchild
 (expect
-  #{{:name "E", :children #{}}}
-  (-> (with-collection-hierarchy [{:keys [d]}]
-        (#'collection/descendants d))
-      remove-ids-and-locations))
+  #{{:name "E", :id true, :location "/A/C/D/", :children #{}}}
+  (with-collection-hierarchy [{:keys [d]}]
+    (descendants d)))
 
-;;; --------------------------------------------- Effective Descendants ----------------------------------------------
 
-(defmacro with-current-user-perms-for-collections
-  "Run `body` with the current User permissions for `collections-or-ids`.
+;;; ----------------------------------------------- Effective Children -----------------------------------------------
 
-     (with-current-user-perms-for-collections [a b c]
-       ...)"
-  {:style/indent 1}
-  [collections-or-ids & body]
-  `(binding [*current-user-permissions-set* (atom #{~@(for [collection-or-id collections-or-ids]
-                                                        `(perms/collection-read-path ~collection-or-id))})]
-     ~@body))
+(defn- effective-children [collection]
+  (set (map :name (collection/effective-children collection))))
 
 ;; If we *have* perms for everything we should just see B and C.
 (expect
   #{"B" "C"}
   (with-collection-hierarchy [{:keys [a b c d e f g]}]
     (with-current-user-perms-for-collections [a b c d e f g]
-      (set (map :name (collection/effective-children a))))))
+      (effective-children a))))
 
-;; make sure that `effective-children` isn't returning children of children! Those should get discarded.
-;; They should also have `:effective_location` rather than location.
+;; make sure that `effective-children` isn't returning children or location of children! Those should get discarded.
 (expect
-  #{:name :id :effective_location}
+  #{:name :id}
   (with-collection-hierarchy [{:keys [a b c d e f g]}]
     (with-current-user-perms-for-collections [a b c d e f g]
       (set (keys (first (collection/effective-children a)))))))
@@ -383,7 +471,7 @@
   #{"B" "D" "F"}
   (with-collection-hierarchy [{:keys [a b d e f g]}]
     (with-current-user-perms-for-collections [a b d e f g]
-      (set (map :name (collection/effective-children a))))))
+      (effective-children a))))
 
 ;; If we also remove D, its child (F) should get moved up, for a total of 2 levels.
 ;;
@@ -396,7 +484,7 @@
   #{"B" "E" "F"}
   (with-collection-hierarchy [{:keys [a b e f g]}]
     (with-current-user-perms-for-collections [a b e f g]
-      (set (map :name (collection/effective-children a))))))
+      (effective-children a))))
 
 ;; If we remove C and both its children, both grandchildren should get get moved up
 ;;
@@ -409,7 +497,7 @@
   #{"B" "E" "G"}
   (with-collection-hierarchy [{:keys [a b e g]}]
     (with-current-user-perms-for-collections [a b e g]
-      (set (map :name (collection/effective-children a))))))
+      (effective-children a))))
 
 ;; Now try with one of the Children. `effective-children` for C should be D & F
 ;;
@@ -420,7 +508,7 @@
   #{"D" "F"}
   (with-collection-hierarchy [{:keys [b c d e f g]}]
     (with-current-user-perms-for-collections [b c d e f g]
-      (set (map :name (collection/effective-children c))))))
+      (effective-children c))))
 
 ;; If we remove perms for D & F their respective children should get moved up
 ;;
@@ -431,4 +519,4 @@
   #{"E" "G"}
   (with-collection-hierarchy [{:keys [b c e g]}]
     (with-current-user-perms-for-collections [b c e g]
-      (set (map :name (collection/effective-children c))))))
+      (effective-children c))))

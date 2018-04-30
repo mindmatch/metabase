@@ -196,14 +196,14 @@
 ;;; |                         Nested Collections: Ancestors, Childrens, Child Collections                          |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
-(s/defn ^:hydrate ancestors :- [CollectionInstance]
+(s/defn ^:private ^:hydrate ancestors :- [CollectionInstance]
   "Fetch ancestors (parent, grandparent, etc.) of a `collection`. These are returned in order starting with the
   highest-level (e.g. most distant) ancestor."
   [{:keys [location]}]
   (when-let [ancestor-ids (seq (location-path->ids location))]
     (db/select [Collection :name :id] :id [:in ancestor-ids])))
 
-(s/defn effective-ancenstors :- [CollectionInstance]
+(s/defn effective-ancestors :- [CollectionInstance]
   "Fetch the ancestors of a `collection`, filtering out any ones the current User isn't allowed to see. This is used
   in the UI to power the 'breadcrumb' path to the location of a given Collection. For example, suppose we have four
   Collections, nested like:
@@ -300,11 +300,9 @@
   (-> (for [child (if (contains? collection :children)
                     (:children collection)
                     (descendants collection))]
-        ;; if we can read this `child` then we can go ahead and keep it as is. Discard its `children`, replace
-        ;; `location` with `effective_location`
+        ;; if we can read this `child` then we can go ahead and keep it as is. Discard its `children` and `location`
         (if (i/can-read? child)
-          (-> (assoc child :effective_location (effective-location-path child))
-              (dissoc :children :location))
+          (dissoc child :children :location)
           ;; otherwise recursively call on each of the grandchildren. Make it a `vec` so flatten works on it
           (vec (effective-children child))))
       ;; since the results will be nested once for each recursive call, un-nest the results and convert back to a set
