@@ -304,7 +304,6 @@
             :created_at             $
             :database_id            database-id ; these should be inferred from the dataset_query
             :table_id               table-id
-            :in_public_dashboard    false
             :collection             nil
             :labels                 []}))
   ((user->client :rasta) :get 200 (str "card/" (u/get-id card))))

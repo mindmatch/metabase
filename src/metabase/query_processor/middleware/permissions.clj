@@ -114,12 +114,6 @@
   [database-or-id]
   (throw-if-user-doesnt-have-permissions-for-path (perms/native-readwrite-path (u/get-id database-or-id))))
 
-(defn- ^:deprecated throw-if-cannot-run-existing-native-query-referencing-db
-  "Throw an exception if User with USER-ID doesn't have native query *read* permissions for DATABASE.
-   (DEPRECATED because native read permissions are being eliminated in favor of Collection permissions.)"
-  [database-or-id]
-  (throw-if-user-doesnt-have-permissions-for-path (perms/native-read-path (u/get-id database-or-id))))
-
 (defn- throw-if-user-doesnt-have-access-to-collection
   "Throw an exception if the current User doesn't have permissions to run a Card that is part of COLLECTION."
   [collection-id]
@@ -138,16 +132,11 @@
   {:pre [(integer? user-id) (map? outer-query)]}
   (let [native? (= (keyword query-type) :native)
 
-        {collection-id :collection_id, public-uuid :public_uuid, in-public-dash? :in_public_dashboard}
-        (-> (db/select-one ['Card :id :collection_id :public_uuid] :id card-id)
-            (hydrate :in_public_dashboard))]
+        {collection-id :collection_id, public-uuid :public_uuid}
+        (db/select-one ['Card :id :collection_id :public_uuid] :id card-id)]
     ;; TODO - repeating all this logic below is DUMB. Why can't we just use `can-read?` on the Card like we do
     ;; everywhere else? Now we effectively have two places where we have to keep that logic in sync
     (cond
-      ;; if the card itself is public, or if its in a Public dashboard, you are always allowed to run its query
-      (or public-uuid in-public-dash?)
-      :ok
-
       ;; if the card is in a COLLECTION, then see if the current user has permissions for that collection
       collection-id
       (throw-if-user-doesnt-have-access-to-collection collection-id)

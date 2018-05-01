@@ -9,7 +9,7 @@
             [metabase.util :as u]
             [toucan.util.test :as tt]))
 
-;;; ------------------------------------------------------------ valid-object-path? ------------------------------------------------------------
+;;; ----------------------------------------------- valid-object-path? -----------------------------------------------
 
 (expect (perms/valid-object-path? "/db/1/"))
 (expect (perms/valid-object-path? "/db/1/native/"))
@@ -505,9 +505,47 @@
                                                           #{"/db/1/" "/db/9/"}))
 
 
-;;; +----------------------------------------------------------------------------------------------------------------------------------------------------------------+
-;;; |                                                                    Permissions Graph Tests                                                                     |
-;;; +----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+;;; ------------------------------------ perms-objects-set-for-parent-collection -------------------------------------
+
+(expect
+  #{"/collection/1337/read/"}
+  (perms/perms-objects-set-for-parent-collection {:collection_id 1337} :read))
+
+(expect
+  #{"/collection/1337/"}
+  (perms/perms-objects-set-for-parent-collection {:collection_id 1337} :write))
+
+(expect
+ #{"/collection/root/read/"}
+ (perms/perms-objects-set-for-parent-collection {:collection_id nil} :read))
+
+(expect
+  #{"/collection/root/"}
+  (perms/perms-objects-set-for-parent-collection {:collection_id nil} :write))
+
+;; map must have `:collection_id` key
+(expect
+  Exception
+  (perms/perms-objects-set-for-parent-collection {} :read))
+
+;; must be a map
+(expect
+  Exception
+  (perms/perms-objects-set-for-parent-collection 100 :read))
+
+(expect
+  Exception
+  (perms/perms-objects-set-for-parent-collection nil :read))
+
+;; `read-or-write` must be `:read` or `:write`
+(expect
+  Exception
+  (perms/perms-objects-set-for-parent-collection {:collection_id nil} :readwrite))
+
+
+;;; +----------------------------------------------------------------------------------------------------------------+
+;;; |                                            Permissions Graph Tests                                             |
+;;; +----------------------------------------------------------------------------------------------------------------+
 
 (defn- test-data-graph [group]
   (get-in (perms/graph) [:groups (u/get-id group) (data/id) :schemas "PUBLIC"]))
@@ -520,7 +558,8 @@
     ;; first, graph permissions only for VENUES
     (perms/grant-permissions! group (perms/object-path (data/id) "PUBLIC" (data/id :venues)))
     [(test-data-graph group)
-     ;; next, grant permissions via `update-graph!` for CATEGORIES as well. Make sure permissions for VENUES are retained (#3888)
+     ;; next, grant permissions via `update-graph!` for CATEGORIES as well. Make sure permissions for VENUES are
+     ;; retained (#3888)
      (do
        (perms/update-graph! [(u/get-id group) (data/id) :schemas "PUBLIC" (data/id :categories)] :all)
        (test-data-graph group))]))

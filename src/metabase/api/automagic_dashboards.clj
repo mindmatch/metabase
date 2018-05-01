@@ -229,7 +229,7 @@
                                            (-> (Dashboard dashboard)
                                                api/check-404
                                                (hydrate [:ordered_cards
-                                                         [:card :in_public_dashboard]
+                                                         :card
                                                          :series]))
                                            dashboard)
                                          (->segment left)

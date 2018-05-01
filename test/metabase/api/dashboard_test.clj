@@ -146,7 +146,6 @@
                                                            :read_permissions       nil
                                                            :visualization_settings {}
                                                            :query_average_duration nil
-                                                           :in_public_dashboard    false
                                                            :result_metadata        nil})
                            :series                 []}]})
   ;; fetch a dashboard WITH a dashboard card on it

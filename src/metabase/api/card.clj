@@ -160,7 +160,7 @@
 ;; TODO - do we need to hydrate the cards' collections as well?
 (defn- cards-for-filter-option [filter-option model-id label collection-slug]
   (let [cards (-> ((filter-option->fn (or filter-option :all)) model-id)
-                  (hydrate :creator :collection :in_public_dashboard)
+                  (hydrate :creator :collection)
                   hydrate-labels
                   hydrate-favorites)]
     ;; Since labels and collections are hydrated in Clojure-land we need to wait until this point to apply
@@ -216,7 +216,7 @@
   "Get `Card` with ID."
   [id]
   (u/prog1 (-> (Card id)
-               (hydrate :creator :dashboard_count :labels :can_write :collection :in_public_dashboard)
+               (hydrate :creator :dashboard_count :labels :can_write :collection)
                api/read-check)
     (events/publish-event! :card-read (assoc <> :actor_id api/*current-user-id*))))
 
@@ -582,7 +582,7 @@
               :or   {constraints qp/default-query-constraints
                      context     :question}}]
   {:pre [(u/maybe? sequential? parameters)]}
-  (let [card    (api/read-check (hydrate (Card card-id) :in_public_dashboard))
+  (let [card    (api/read-check (Card card-id))
         query   (query-for-card card parameters constraints)
         options {:executed-by  api/*current-user-id*
                  :context      context
