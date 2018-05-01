@@ -46,7 +46,9 @@
    #"^/db/(\d+)/schema/([^\\/]*)/$"               ; permissions for a specific schema
    #"^/db/(\d+)/schema/([^\\/]*)/table/(\d+)/$"   ; permissions for a specific table
    #"^/collection/(\d+)/$"                        ; readwrite permissions for a collection
-   #"^/collection/(\d+)/read/$"])                 ; read permissions for a collection
+   #"^/collection/(\d+)/read/$"                   ; read permissions for a collection
+   #"^/collection/root/$"                         ; readwrite permissions for the 'Root' Collection (things with `nil` collection_id)
+   #"^/collection/root/read/$"])                  ; read permissions for the 'Root' Collection
 
 (defn valid-object-path?
   "Does OBJECT-PATH follow a known, allowed format to an *object*?
