@@ -313,17 +313,35 @@
    :color       "#123456"
    :archived    false
    :location    "/"}
-  (dissoc (u/prog1 ((user->client :crowberto) :post 200 "collection"
-                    {:name "Stamp Collection", :color "#123456"})
-            ;; make sure we clean up after ourselves
-            (db/delete! Collection :id (u/get-id <>)))
-          :id))
+  (tu/with-model-cleanup [Collection]
+    (-> ((user->client :crowberto) :post 200 "collection"
+         {:name "Stamp Collection", :color "#123456"})
+        (dissoc :id))))
 
 ;; test that non-admins aren't allowed to create a collection
 (expect
   "You don't have permissions to do that."
   ((user->client :rasta) :post 403 "collection"
    {:name "Stamp Collection", :color "#123456"}))
+
+;; Can I create a Collection as a child of an existing collection?
+(expect
+  {:id          true
+   :name        "Trading Card Collection"
+   :slug        "trading_card_collection"
+   :description "Collection of basketball cards including limited-edition holographic Draymond Green"
+   :color       "#ABCDEF"
+   :archived    false
+   :location    "/A/C/D/"}
+  (tu/with-model-cleanup [Collection]
+    (with-collection-hierarchy [a c d]
+      (-> ((user->client :crowberto) :post 200 "collection"
+           {:name        "Trading Card Collection"
+            :color       "#ABCDEF"
+            :description "Collection of basketball cards including limited-edition holographic Draymond Green"
+            :location    (collection/location-path a c d)})
+          (update :location collection-test/location-path-ids->names)
+          (update :id integer?)))))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -377,3 +395,18 @@
        {:name "My Beautiful Collection", :color "#ABCDEF", :archived true}))
     [(et/regex-email-bodies #"the question was archived by Crowberto Corv")
      (Pulse pulse-id)]))
+
+;; Can I *change* the `location` of a Collection? (i.e. move it into a different parent Colleciton)
+(expect
+  {:id          true
+   :name        "E"
+   :slug        "e"
+   :description nil
+   :color       "#ABCDEF"
+   :archived    false
+   :location    "/A/B/"}
+  (with-collection-hierarchy [a b e]
+    (-> ((user->client :crowberto) :put 200 (str "collection/" (u/get-id e))
+         {:location (collection/location-path a b)})
+        (update :location collection-test/location-path-ids->names)
+        (update :id integer?))))
