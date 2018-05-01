@@ -6,7 +6,8 @@
              [util :as u]]
             [metabase.models
              [card :refer [Card]]
-             [collection :refer [Collection] :as collection]
+             [collection :as collection :refer [Collection]]
+             [collection-test :as collection-test]
              [dashboard :refer [Dashboard]]
              [database :refer [Database]]
              [permissions :as perms]
@@ -16,12 +17,10 @@
              [pulse-channel :refer [PulseChannel]]
              [pulse-channel-recipient :refer [PulseChannelRecipient]]
              [table :refer [Table]]]
-            [metabase.models.collection-test :as collection-test]
             [metabase.test.data.users :refer [user->client user->id]]
             [metabase.test.util :as tu]
             [toucan.db :as db]
-            [toucan.util.test :as tt]
-            [clojure.string :as str]))
+            [toucan.util.test :as tt]))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                                GET /collection                                                 |
@@ -82,8 +81,16 @@
 ;; check that cards are returned with the collections detail endpoint
 (tt/expect-with-temp [Collection [collection]
                       Card       [card        {:collection_id (u/get-id collection)}]]
-  (tu/obj->json->obj (assoc collection :cards [(select-keys card [:name :id])], :dashboards [], :pulses []))
-  (tu/obj->json->obj ((user->client :crowberto) :get 200 (str "collection/" (u/get-id collection)))))
+  (tu/obj->json->obj
+    (assoc collection
+      :cards               [(select-keys card [:name :id])]
+      :dashboards          []
+      :pulses              []
+      :effective_ancestors []
+      :effective_location  "/"
+      :effective_children  []))
+  (tu/obj->json->obj
+    ((user->client :crowberto) :get 200 (str "collection/" (u/get-id collection)))))
 
 ;; check that collections detail doesn't return archived collections
 (expect
@@ -146,15 +153,21 @@
          `(perms/grant-collection-read-permissions! (group/all-users) ~collection-symb))
      ~@body))
 
+(defn- format-ancestors-and-children
+  "Nicely format the `:effective_` results from an API call."
+  [results]
+  (-> results
+      (select-keys [:effective_children :effective_ancestors :effective_location])
+      (update :effective_children  (comp set (partial map #(update % :id integer?))))
+      (update :effective_ancestors (partial map #(update % :id integer?)))
+      (update :effective_location collection-test/location-path-ids->names)))
+
 (defn- api-get-collection-ancestors-and-children
   "Call the API with Rasta to fetch `collection-or-id` and put the `:effective_` results in a nice format for the tests
   below."
   [collection-or-id]
   (-> ((user->client :rasta) :get 200 (str "collection/" (u/get-id collection-or-id)))
-      (select-keys [:effective_children :effective_ancestors :effective_location])
-      (update :effective_children  (comp set (partial map #(update % :id integer?))))
-      (update :effective_ancestors (partial map #(update % :id integer?)))
-      (update :effective_location collection-test/location-path-ids->names)))
+      format-ancestors-and-children))
 
 ;; does a top-level Collection like A have the correct Children?
 (expect
@@ -258,6 +271,34 @@
   (with-some-children-of-collection nil
     (-> ((user->client :crowberto) :get 200 "collection/root?model=cards")
         remove-ids-from-collection-detail)))
+
+
+;;; ----------------------------------- Effective Children, Ancestors, & Location ------------------------------------
+
+(defn- api-get-root-collection-ancestors-and-children
+  "Call the API with Rasta to fetch the 'Root' Collection and put the `:effective_` results in a nice format for the
+  tests below."
+  []
+  (-> ((user->client :rasta) :get 200 "collection/root")
+      format-ancestors-and-children))
+
+;; Do top-level collections show up as children of the Root Collection?
+(expect
+  {:effective_children #{{:name "A", :id true}}
+   :effective_ancestors []
+   :effective_location "/"}
+  (with-collection-hierarchy [a b c d e f g]
+    (api-get-root-collection-ancestors-and-children)))
+
+;; ...and collapsing children should work for the Root Collection as well
+(expect
+  {:effective_children #{{:name "B", :id true}
+                         {:name "D", :id true}
+                         {:name "F", :id true}}
+   :effective_ancestors []
+   :effective_location "/"}
+  (with-collection-hierarchy [b d e f g]
+    (api-get-root-collection-ancestors-and-children)))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+

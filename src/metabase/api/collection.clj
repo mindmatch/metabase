@@ -95,7 +95,7 @@
   (merge
    {:name                (tru "Root Collection")
     :effective_location  "/"
-    :effective_children  (filter mi/can-read? (db/select [Collection :id :name] :location "/"))
+    :effective_children  (collection/effective-children collection/root-collection)
     :effective_ancestors []}
    (collection-children model model->root-collection-children-fn)))
 

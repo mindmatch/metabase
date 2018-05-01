@@ -439,6 +439,32 @@
   (with-collection-hierarchy [{:keys [d]}]
     (descendants d)))
 
+;; For the *Root* Collection, can we get top-level Collections?
+(expect
+  #{{:name     "A"
+     :id       true
+     :location "/"
+     :children #{{:name     "C"
+                  :id       true
+                  :location "/A/"
+                  :children #{{:name     "D"
+                               :id       true
+                               :location "/A/C/"
+                               :children #{{:name     "E"
+                                            :id       true
+                                            :location "/A/C/D/"
+                                            :children #{}}}}
+                              {:name     "F"
+                               :id       true
+                               :location "/A/C/"
+                               :children #{{:name     "G"
+                                            :id       true
+                                            :location "/A/C/F/"
+                                            :children #{}}}}}}
+                 {:name "B", :id true, :location "/A/", :children #{}}}}
+    (with-collection-hierarchy [{:keys [a b c d e f g]}]
+      (descendants collection/root-collection))})
+
 
 ;;; ----------------------------------------------- Effective Children -----------------------------------------------
 
@@ -519,3 +545,24 @@
   (with-collection-hierarchy [{:keys [b c e g]}]
     (with-current-user-perms-for-collections [b c e g]
       (effective-children c))))
+
+;; For the Root Collection: can we fetch its effective children?
+(expect
+  #{"A"}
+  (with-collection-hierarchy [{:keys [a b c d e f g]}]
+    (with-current-user-perms-for-collections [a b c d e f g]
+      (effective-children collection/root-collection))))
+
+;; For the Root Collection: if we don't have perms for A, we should get B and C as effective children
+(expect
+  #{"B" "C"}
+  (with-collection-hierarchy [{:keys [b c d e f g]}]
+    (with-current-user-perms-for-collections [b c d e f g]
+      (effective-children collection/root-collection))))
+
+;; For the Root Collection: if we remove A and C we should get B, D and F
+(expect
+  #{"B" "D" "F"}
+  (with-collection-hierarchy [{:keys [b d e f g]}]
+    (with-current-user-perms-for-collections [b d e f g]
+      (effective-children collection/root-collection))))

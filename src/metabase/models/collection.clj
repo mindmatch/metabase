@@ -193,7 +193,7 @@
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
-;;; |                         Nested Collections: Ancestors, Childrens, Child Collections                          |
+;;; |                          Nested Collections: Ancestors, Childrens, Child Collections                           |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
 (s/defn ^:private ^:hydrate ancestors :- [CollectionInstance]
@@ -224,6 +224,13 @@
   [collection]
   (filter i/can-read? (ancestors collection)))
 
+(def root-collection
+  "Special placeholder map representing the Root Collection, which isn't really a real Collection."
+  {::is-root? true})
+
+(defn- is-root-collection? [m]
+  (boolean (::is-root? m)))
+
 (s/defn children-location :- LocationPath
   "Given a `collection` return a location path that should match the `:location` value of all the children of the
   Collection.
@@ -233,7 +240,9 @@
      ;; To get children of this collection:
      (db/select Collection :location \"/10/20/30/\")"
   [{:keys [location], :as collection} :- su/Map]
-  (str location (u/get-id collection) "/"))
+  (if (is-root-collection? collection)
+    "/"
+    (str location (u/get-id collection) "/")))
 
 (def ^:private Children
   (s/both
