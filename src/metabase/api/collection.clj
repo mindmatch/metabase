@@ -84,9 +84,7 @@
   {model (s/maybe (s/enum "cards" "dashboards" "pulses"))}
   (merge
    (-> (api/read-check Collection id, :archived false)
-       (hydrate :child_collections :ancestors)
-       (update :child_collections (partial filter mi/can-read?))
-       (update :ancestors         (partial filter mi/can-read?)))
+       (hydrate :effective_location :effective_children :effective_ancestors))
    (collection-children model model->collection-children-fn id)))
 
 (api/defendpoint GET "/root"
@@ -95,9 +93,10 @@
   [model]
   {model (s/maybe (s/enum "cards" "dashboards" "pulses"))}
   (merge
-   {:name              (tru "Root Collection")
-    :child_collections (filter mi/can-read? (db/select [Collection :id :name] :location "/"))
-    :ancestors         []}
+   {:name                (tru "Root Collection")
+    :effective_location  "/"
+    :effective_children  (filter mi/can-read? (db/select [Collection :id :name] :location "/"))
+    :effective_ancestors []}
    (collection-children model model->root-collection-children-fn)))
 
 

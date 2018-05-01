@@ -6,7 +6,7 @@
              [util :as u]]
             [metabase.models
              [card :refer [Card]]
-             [collection :refer [Collection]]
+             [collection :refer [Collection] :as collection]
              [dashboard :refer [Dashboard]]
              [database :refer [Database]]
              [permissions :as perms]
@@ -20,7 +20,8 @@
             [metabase.test.data.users :refer [user->client user->id]]
             [metabase.test.util :as tu]
             [toucan.db :as db]
-            [toucan.util.test :as tt]))
+            [toucan.util.test :as tt]
+            [clojure.string :as str]))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                                GET /collection                                                 |
@@ -75,6 +76,9 @@
   (tt/with-temp Collection [collection]
     ((user->client :rasta) :get 403 (str "collection/" (u/get-id collection)))))
 
+
+;;; ----------------------------------------- Cards, Dashboards, and Pulses ------------------------------------------
+
 ;; check that cards are returned with the collections detail endpoint
 (tt/expect-with-temp [Collection [collection]
                       Card       [card        {:collection_id (u/get-id collection)}]]
@@ -128,56 +132,88 @@
       (-> ((user->client :rasta) :get 200 (str "collection/" (u/get-id collection) "?model=dashboards"))
           remove-ids-from-collection-detail))))
 
-;; Make sure we also return the `child_collections` and they get filtered appropriately as well
-(defn- api-get-collection-ancestors-and-child-collections [collection-or-id]
-  (into {} (for [[k vs] (-> ((user->client :rasta) :get 200 (str "collection/" (u/get-id collection-or-id)))
-                           (select-keys [:ancestors :child_collections]))]
-             [k (map :name vs)])))
+;;; ------------------------------------ Effective Ancestors & Effective Children ------------------------------------
 
-(defmacro ^:private with-a-family-of-collections-and-permissions
-  "Totally awesome macro that builds on `collection-test/with-a-family-of-collections`, but also grants read permissions
-  to the All Users group for any Collections you bind to something other than `_`. Wow!"
+(defmacro ^:private with-collection-hierarchy
+  "Totally-rad macro that creates a Collection hierarchy and grants the All Users group perms for all the Collections
+  you've bound."
   {:style/indent 1}
-  [[grandparent-binding parent-binding child-binding] & body]
-  (let [grandparent (gensym "grandparent_")
-        parent      (gensym "parent_")
-        child       (gensym "child_")]
-    `(collection-test/with-a-family-of-collections [~grandparent ~parent ~child]
-       ~@(for [[binding collection] [[grandparent-binding grandparent]
-                                     [parent-binding      parent]
-                                     [child-binding       child]]
-               :when                (not= binding '_)]
-           `(perms/grant-collection-read-permissions! (group/all-users) ~collection))
-       (let [~grandparent-binding ~grandparent
-             ~parent-binding      ~parent
-             ~child-binding       ~child]
-         ~@body))))
+  [collection-bindings & body]
+  {:pre [(vector? collection-bindings)
+         (every? symbol? collection-bindings)]}
+  `(collection-test/with-collection-hierarchy [{:keys ~collection-bindings}]
+     ~@(for [collection-symb collection-bindings]
+         `(perms/grant-collection-read-permissions! (group/all-users) ~collection-symb))
+     ~@body))
 
+(defn- api-get-collection-ancestors-and-children
+  "Call the API with Rasta to fetch `collection-or-id` and put the `:effective_` results in a nice format for the tests
+  below."
+  [collection-or-id]
+  (-> ((user->client :rasta) :get 200 (str "collection/" (u/get-id collection-or-id)))
+      (select-keys [:effective_children :effective_ancestors :effective_location])
+      (update :effective_children  (comp set (partial map #(update % :id integer?))))
+      (update :effective_ancestors (partial map #(update % :id integer?)))
+      (update :effective_location collection-test/location-path-ids->names)))
+
+;; does a top-level Collection like A have the correct Children?
 (expect
-  {:ancestors [], :child_collections []}
-  (with-a-family-of-collections-and-permissions [_ _ child]
-    (api-get-collection-ancestors-and-child-collections child)))
+  {:effective_children  #{{:name "B", :id true} {:name "C", :id true}}
+   :effective_ancestors []
+   :effective_location  "/"}
+  (with-collection-hierarchy [a b c d g]
+    (api-get-collection-ancestors-and-children a)))
 
+;; ok, does a second-level Collection have its parent and its children?
 (expect
-  {:ancestors ["Parent"], :child_collections []}
-  (with-a-family-of-collections-and-permissions [_ parent child]
-    (api-get-collection-ancestors-and-child-collections child)))
+  {:effective_children  #{{:name "D", :id true} {:name "G", :id true}}
+   :effective_ancestors [{:name "A", :id true}]
+   :effective_location  "/A/"}
+  (with-collection-hierarchy [a b c d g]
+    (api-get-collection-ancestors-and-children c)))
 
+;; what about a third-level Collection?
 (expect
-  {:ancestors ["Grandparent" "Parent"], :child_collections []}
-  (with-a-family-of-collections-and-permissions [grandparent parent child]
-    (api-get-collection-ancestors-and-child-collections child)))
+  {:effective_children #{}
+   :effective_ancestors [{:name "A", :id true} {:name "C", :id true}]
+   :effective_location "/A/C/"}
+  (with-collection-hierarchy [a b c d g]
+    (api-get-collection-ancestors-and-children d)))
 
-;; make sure we filter out intermediate ancestors if you aren't able to see them!
+;; for D: if we remove perms for C we should only have A as an ancestor; effective_location should lie and say we are
+;; a child of A
 (expect
-  {:ancestors ["Grandparent"], :child_collections []}
-  (with-a-family-of-collections-and-permissions [grandparent _ child]
-    (api-get-collection-ancestors-and-child-collections child)))
+  {:effective_children #{}
+   :effective_ancestors [{:name "A", :id true}]
+   :effective_location "/A/"}
+  (with-collection-hierarchy [a b d g]
+    (api-get-collection-ancestors-and-children d)))
 
-(defn- x []
-  {:ancestors [], :child_collections ["Child"]}
-  (with-a-family-of-collections-and-permissions [_ parent child]
-    (api-get-collection-ancestors-and-child-collections parent)))
+;; for D: If, on the other hand, we remove A, we should see C as the only ancestor and as a root-level Collection.
+(expect
+  {:effective_children #{},
+   :effective_ancestors [{:name "C", :id true}]
+   :effective_location "/C/"}
+  (with-collection-hierarchy [b c d g]
+    (api-get-collection-ancestors-and-children d)))
+
+;; for C: if we remove D we should get E and F as effective children
+(expect
+  {:effective_children #{{:name "E", :id true} {:name "F", :id true}}
+   :effective_ancestors [{:name "A", :id true}]
+   :effective_location "/A/"}
+  (with-collection-hierarchy [a b c e f g]
+    (api-get-collection-ancestors-and-children c)))
+
+;; Make sure we can collapse multiple generations. For A: removing C and D should move up E and F
+(expect
+  {:effective_children #{{:name "B", :id true}
+                         {:name "E", :id true}
+                         {:name "F", :id true}}
+   :effective_ancestors []
+   :effective_location "/"}
+  (with-collection-hierarchy [a b e f g]
+    (api-get-collection-ancestors-and-children a)))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
