@@ -1,19 +1,14 @@
 (ns metabase.models.card-test
   (:require [cheshire.core :as json]
             [expectations :refer :all]
-            [metabase.api.common :refer [*current-user-permissions-set*]]
             [metabase.models
-             [card :refer :all :as card]
+             [card :as card :refer :all]
              [dashboard :refer [Dashboard]]
              [dashboard-card :refer [DashboardCard]]
-             [database :as database]
-             [interface :as mi]
              [permissions :as perms]]
-            [metabase.query-processor.middleware.expand :as ql]
             [metabase.test
              [data :as data]
              [util :as tu]]
-            [metabase.test.data.users :refer :all]
             [metabase.util :as u]
             [toucan.db :as db]
             [toucan.util.test :as tt]))
@@ -57,124 +52,6 @@
    {:dataset_query {:type :query
                     :query {:aggregation nil
                             :filter      nil}}}))
-
-
-;;; ---------------------------------------------- Permissions Checking ----------------------------------------------
-
-(expect
-  false
-  (tt/with-temp Card [card {:dataset_query {:database (data/id), :type "native"}}]
-    (binding [*current-user-permissions-set* (delay #{})]
-      (mi/can-read? card))))
-
-(expect
-  (tt/with-temp Card [card {:dataset_query {:database (data/id), :type "native"}}]
-    (binding [*current-user-permissions-set* (delay #{(perms/native-read-path (data/id))})]
-      (mi/can-read? card))))
-
-;; in order to *write* a native card user should need native readwrite access
-(expect
-  false
-  (tt/with-temp Card [card {:dataset_query {:database (data/id), :type "native"}}]
-    (binding [*current-user-permissions-set* (delay #{(perms/native-read-path (data/id))})]
-      (mi/can-write? card))))
-
-(expect
-  (tt/with-temp Card [card {:dataset_query {:database (data/id), :type "native"}}]
-    (binding [*current-user-permissions-set* (delay #{(perms/native-readwrite-path (data/id))})]
-      (mi/can-write? card))))
-
-
-;;; check permissions sets for queries
-;; native read
-(defn- native [query]
-  {:database 1
-   :type     :native
-   :native   {:query query}})
-
-(expect
-  #{"/db/1/native/read/"}
-  (query-perms-set (native "SELECT count(*) FROM toucan_sightings;") :read))
-
-;; native write
-(expect
-  #{"/db/1/native/"}
-  (query-perms-set (native "SELECT count(*) FROM toucan_sightings;") :write))
-
-
-(defn- mbql [query]
-  {:database (data/id)
-   :type     :query
-   :query    query})
-
-;; MBQL w/o JOIN
-(expect
-  #{(perms/object-path (data/id) "PUBLIC" (data/id :venues))}
-  (query-perms-set (mbql (ql/query
-                           (ql/source-table (data/id :venues))))
-                   :read))
-
-;; MBQL w/ JOIN
-(expect
-  #{(perms/object-path (data/id) "PUBLIC" (data/id :checkins))
-    (perms/object-path (data/id) "PUBLIC" (data/id :venues))}
-  (query-perms-set (mbql (ql/query
-                           (ql/source-table (data/id :checkins))
-                           (ql/order-by (ql/asc (ql/fk-> (data/id :checkins :venue_id) (data/id :venues :name))))))
-                   :read))
-
-;; MBQL w/ nested MBQL query
-(defn- query-with-source-card [card]
-  {:database database/virtual-id, :type "query", :query {:source_table (str "card__" (u/get-id card))}})
-
-(expect
-  #{(perms/object-path (data/id) "PUBLIC" (data/id :venues))}
-  (tt/with-temp Card [card {:dataset_query {:database (data/id)
-                                            :type     :query
-                                            :query    {:source-table (data/id :venues)}}}]
-    (query-perms-set (query-with-source-card card) :read)))
-
-;; MBQL w/ nested MBQL query including a JOIN
-(expect
-  #{(perms/object-path (data/id) "PUBLIC" (data/id :checkins))
-    (perms/object-path (data/id) "PUBLIC" (data/id :users))}
-  (tt/with-temp Card [card {:dataset_query {:database (data/id)
-                                            :type     :query
-                                            :query    {:source-table (data/id :checkins)
-                                                       :order-by     [[:asc [:fk-> (data/id :checkins :user_id) (data/id :users :id)]]]}}}]
-    (query-perms-set (query-with-source-card card) :read)))
-
-;; MBQL w/ nested NATIVE query
-(expect
-  #{(perms/native-read-path (data/id))}
-  (tt/with-temp Card [card {:dataset_query {:database (data/id)
-                                            :type     :native
-                                            :native   {:query "SELECT * FROM CHECKINS"}}}]
-    (query-perms-set (query-with-source-card card) :read)))
-
-;; You should still only need native READ permissions if you want to save a Card based on another Card you can already
-;; READ.
-(expect
-  #{(perms/native-read-path (data/id))}
-  (tt/with-temp Card [card {:dataset_query {:database (data/id)
-                                            :type     :native
-                                            :native   {:query "SELECT * FROM CHECKINS"}}}]
-    (query-perms-set (query-with-source-card card) :write)))
-
-;; However if you just pass in the same query directly as a `:source-query` you will still require READWRITE
-;; permissions to save the query since we can't verify that it belongs to a Card that you can view.
-(expect
-  #{(perms/native-readwrite-path (data/id))}
-  (query-perms-set {:database (data/id)
-                    :type     :query
-                    :query    {:source-query {:native "SELECT * FROM CHECKINS"}}}
-                   :write))
-
-;; invalid/legacy card should return perms for something that doesn't exist so no one gets to see it
-(expect
-  #{"/db/0/"}
-  (query-perms-set (mbql {:filter [:WOW 100 200]})
-                   :read))
 
 
 ;; Test that when somebody archives a Card, it is removed from any Dashboards it belongs to

@@ -62,7 +62,7 @@
   [dbs :- [su/Map]]
   (for [db dbs]
     (assoc db :native_permissions (if (perms/set-has-full-permissions? @api/*current-user-permissions-set*
-                                        (perms/native-readwrite-path (u/get-id db)))
+                                        (perms/adhoc-native-query-path (u/get-id db)))
                                     :write
                                     :none))))
 

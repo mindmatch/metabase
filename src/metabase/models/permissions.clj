@@ -108,7 +108,7 @@
   ([database-or-id :- MapOrID, schema-name :- (s/maybe su/NonBlankString), table-or-id :- MapOrID]
    (str (object-path database-or-id schema-name) "table/" (u/get-id table-or-id) "/" )))
 
-(s/defn native-readwrite-path :- ObjectPath
+(s/defn adhoc-native-query-path :- ObjectPath
   "Return the native query read/write permissions path for a database.
    This grants you permissions to run arbitary native queries."
   [database-or-id :- MapOrID]
@@ -252,9 +252,9 @@
               {su/IntGreaterThanZero TablePermissionsGraph}))
 
 (def ^:private NativePermissionsGraph
-  (s/enum :write :read :none)) ; :read is DEPRECATED
+  (s/enum :write :none))
 
-(def ^:private DBPermissionsGraph
+2(def ^:private DBPermissionsGraph
   {(s/optional-key :native)  NativePermissionsGraph
    (s/optional-key :schemas) (s/cond-pre (s/enum :all :none)
                                          {s/Str SchemaPermissionsGraph})})
@@ -308,10 +308,10 @@
              (set-has-partial-permissions? permissions-set path) :some
              :else                                               :none)))
 
-(defn- table->native-readwrite-path [table] (native-readwrite-path (:db_id table)))
-(defn- table->schema-object-path    [table] (object-path (:db_id table) (:schema table)))
-(defn- table->table-object-path     [table] (object-path (:db_id table) (:schema table) (:id table)))
-(defn- table->all-schemas-path      [table] (all-schemas-path (:db_id table)))
+(defn- table->adhoc-native-query-path [table] (adhoc-native-query-path (:db_id table)))
+(defn- table->schema-object-path      [table] (object-path (:db_id table) (:schema table)))
+(defn- table->table-object-path       [table] (object-path (:db_id table) (:schema table) (:id table)))
+(defn- table->all-schemas-path        [table] (all-schemas-path (:db_id table)))
 
 
 (s/defn ^:private schema-graph :- SchemaPermissionsGraph [permissions-set tables]
@@ -322,7 +322,7 @@
                      {(u/get-id table) (permissions-for-path permissions-set (table->table-object-path table))}))))
 
 (s/defn ^:private db-graph :- DBPermissionsGraph [permissions-set tables]
-  {:native  (case (permissions-for-path permissions-set (table->native-readwrite-path (first tables)))
+  {:native  (case (permissions-for-path permissions-set (table->adhoc-native-query-path (first tables)))
               :all  :write
               :some :read
               :none :none)
@@ -398,12 +398,12 @@
 (defn revoke-native-permissions!
   "Revoke all native query permissions for GROUP-OR-ID to database with DATABASE-ID."
   [group-or-id database-id]
-  (delete-related-permissions! group-or-id (native-readwrite-path database-id)))
+  (delete-related-permissions! group-or-id (adhoc-native-query-path database-id)))
 
 (defn grant-native-readwrite-permissions!
   "Grant full readwrite permissions for GROUP-OR-ID to database with DATABASE-ID."
   [group-or-id database-id]
-  (grant-permissions! group-or-id (native-readwrite-path database-id)))
+  (grant-permissions! group-or-id (adhoc-native-query-path database-id)))
 
 (defn revoke-db-schema-permissions!
   "Remove all permissions entires for a DB and *any* child objects.
@@ -411,7 +411,7 @@
   [group-or-id database-id]
   ;; TODO - if permissions for this DB are DB root entries like `/db/1/` won't this end up removing our native perms?
   (delete-related-permissions! group-or-id (object-path database-id)
-    [:not= :object (native-readwrite-path database-id)]))
+    [:not= :object (adhoc-native-query-path database-id)]))
 
 (defn grant-permissions-for-all-schemas!
   "Grant full permissions for all schemas belonging to this database.
@@ -451,26 +451,28 @@
     :none (revoke-permissions! group-id db-id schema table-id)))
 
 (s/defn ^:private update-schema-perms!
-  [group-id :- su/IntGreaterThanZero, db-id :- su/IntGreaterThanZero, schema :- s/Str, new-schema-perms :- SchemaPermissionsGraph]
+  [group-id         :- su/IntGreaterThanZero
+   db-id            :- su/IntGreaterThanZero
+   schema           :- s/Str
+   new-schema-perms :- SchemaPermissionsGraph]
   (cond
-    (= new-schema-perms :all)  (do (revoke-permissions! group-id db-id schema) ; clear out any existing related permissions
-                                   (grant-permissions! group-id db-id schema)) ; then grant full perms for the schema
+    (= new-schema-perms :all)  (do (revoke-permissions! group-id db-id schema)  ; clear out any existing related permissions
+                                   (grant-permissions!  group-id db-id schema)) ; then grant full perms for the schema
     (= new-schema-perms :none) (revoke-permissions! group-id db-id schema)
     (map? new-schema-perms)    (doseq [[table-id table-perms] new-schema-perms]
                                  (update-table-perms! group-id db-id schema table-id table-perms))))
 
 (s/defn ^:private update-native-permissions!
   [group-id :- su/IntGreaterThanZero, db-id :- su/IntGreaterThanZero, new-native-perms :- NativePermissionsGraph]
-  ;; revoke-native-permissions! will delete all entires that would give permissions for native access.
-  ;; Thus if you had a root DB entry like `/db/11/` this will delete that too.
-  ;; In that case we want to create a new full schemas entry so you don't lose access to all schemas when we modify native access.
+  ;; revoke-native-permissions! will delete all entires that would give permissions for native access. Thus if you had
+  ;; a root DB entry like `/db/11/` this will delete that too. In that case we want to create a new full schemas entry
+  ;; so you don't lose access to all schemas when we modify native access.
   (let [has-full-access? (db/exists? Permissions :group_id group-id, :object (object-path db-id))]
     (revoke-native-permissions! group-id db-id)
     (when has-full-access?
       (grant-permissions-for-all-schemas! group-id db-id)))
   (case new-native-perms
     :write (grant-native-readwrite-permissions! group-id db-id)
-    :read  (grant-native-read-permissions! group-id db-id)
     :none  nil))
 
 

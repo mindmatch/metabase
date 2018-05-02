@@ -38,6 +38,7 @@
             [metabase.util.schema :as su]
             [ring.util.codec :as codec]
             [schema.core :as s]
+            [metabase.models.query.permissions :as query-perms]
             [toucan
              [db :as db]
              [hydrate :refer [hydrate]]])
@@ -264,7 +265,7 @@
    metadata_checksum      (s/maybe su/NonBlankString)}
   ;; check that we have permissions to run the query that we're trying to save
   (api/check-403 (perms/set-has-full-permissions-for-set? @api/*current-user-permissions-set*
-                   (card/query-perms-set dataset_query :write)))
+                   (query-perms/perms-set dataset_query)))
   ;; check that we have permissions for the collection we're trying to save this card to, if applicable
   (when collection_id
     (collection/check-write-perms-for-collection collection_id))
@@ -291,7 +292,7 @@
   [query]
   {:pre [(map? query)]}
   (api/check-403 (perms/set-has-full-permissions-for-set? @api/*current-user-permissions-set*
-                                                          (card/query-perms-set query :read))))
+                   (query-perms/perms-set query))))
 
 (defn- check-allowed-to-modify-query
   "If the query is being modified, check that we have data permissions to run the query."

@@ -694,46 +694,37 @@
     (perms/delete-related-permissions! (perms-group/all-users) (perms/object-path database-id))
     (f database-id card)))
 
-;; can someone with native query *read* permissions see a CSV card? (Issue #3648)
-(expect
-  (str "COUNT(*)\n"
-       "75\n")
-  (do-with-temp-native-card
-    (fn [database-id card]
-      ;; insert new permissions for native read access
-      (perms/grant-native-read-permissions! (perms-group/all-users) database-id)
-      ;; now run the query
-      ((user->client :rasta) :post 200 (format "card/%d/query/csv" (u/get-id card))))))
-
-;; does someone without *read* permissions get DENIED?
-(expect
-  "You don't have permissions to do that."
-  (do-with-temp-native-card
-    (fn [database-id card]
-      ((user->client :rasta) :post 403 (format "card/%d/query/csv" (u/get-id card))))))
-
 
 ;;; Tests for GET /api/card/:id/json
+(defn- do-with-card-in-a-collection-all-users-can-read [card f]
+  (tt/with-temp Collection [collection]
+    (perms/grant-collection-read-permissions! (perms-group/all-users) collection)
+    (db/update! card {:collection_id (u/get-id collection)})
+    (f)))
+
+(defmacro ^:private with-card-in-a-collection-all-users-can-read {:style/indent 1} [card & body]
+  `(do-with-card-in-a-collection-all-users-can-read ~card (fn [] ~@body)))
+
 ;; endpoint should return an array of maps, one for each row
 (expect
   [{(keyword "COUNT(*)") 75}]
   (do-with-temp-native-card
-    (fn [database-id card]
-      (perms/grant-native-read-permissions! (perms-group/all-users) database-id)
-      ((user->client :rasta) :post 200 (format "card/%d/query/json" (u/get-id card))))))
+   (fn [database-id card]
+     (with-card-in-a-collection-all-users-can-read card
+       ((user->client :rasta) :post 200 (format "card/%d/query/json" (u/get-id card)))))))
 
 ;;; Tests for GET /api/card/:id/xlsx
 (expect
   [{:col "COUNT(*)"} {:col 75.0}]
   (do-with-temp-native-card
-    (fn [database-id card]
-      (perms/grant-native-read-permissions! (perms-group/all-users) database-id)
-      (->> ((user->client :rasta) :post 200 (format "card/%d/query/xlsx" (u/get-id card))
-            {:request-options {:as :byte-array}})
-           ByteArrayInputStream.
-           spreadsheet/load-workbook
-           (spreadsheet/select-sheet "Query result")
-           (spreadsheet/select-columns {:A :col})))))
+   (fn [database-id card]
+     (with-card-in-a-collection-all-users-can-read card
+       (->> ((user->client :rasta) :post 200 (format "card/%d/query/xlsx" (u/get-id card))
+             {:request-options {:as :byte-array}})
+            ByteArrayInputStream.
+            spreadsheet/load-workbook
+            (spreadsheet/select-sheet "Query result")
+            (spreadsheet/select-columns {:A :col}))))))
 
 ;;; Test GET /api/card/:id/query/csv & GET /api/card/:id/json & GET /api/card/:id/query/xlsx **WITH PARAMETERS**
 

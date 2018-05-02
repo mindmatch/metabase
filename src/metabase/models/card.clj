@@ -1,17 +1,14 @@
 (ns metabase.models.card
   "Underlying DB model for what is now most commonly referred to as a 'Question' in most user-facing situations. Card
   is a historical name, but is the same thing; both terms are used interchangeably in the backend codebase."
-  (:require [clojure.core.memoize :as memoize]
-            [clojure.set :as set]
+  (:require [clojure.set :as set]
             [clojure.tools.logging :as log]
             [metabase
              [public-settings :as public-settings]
-             [query-processor :as qp]
              [util :as u]]
-            [metabase.api.common :as api :refer [*current-user-id*]]
+            [metabase.api.common :as api :refer [*current-user-id* *current-user-permissions-set*]]
             [metabase.models
              [card-label :refer [CardLabel]]
-             [collection :as collection]
              [dependency :as dependency]
              [field-values :as field-values]
              [interface :as i]
@@ -20,8 +17,7 @@
              [permissions :as perms]
              [query :as query]
              [revision :as revision]]
-            [metabase.query-processor.middleware.permissions :as qp-perms]
-            [metabase.query-processor.util :as qputil]
+            [metabase.models.query.permissions :as query-perms]
             [metabase.util.query :as q]
             [puppetlabs.i18n.core :refer [tru]]
             [toucan
@@ -45,7 +41,6 @@
   (if-let [label-ids (seq (db/select-field :label_id CardLabel, :card_id id))]
     (db/select Label, :id [:in label-ids], {:order-by [:%lower.name]})
     []))
-
 
 ;;; -------------------------------------------------- Dependencies --------------------------------------------------
 
@@ -83,14 +78,17 @@
          card))
 
 (defn- pre-insert [{query :dataset_query, :as card}]
+  ;; TODO - we usually check permissions to save/update stuff in the API layer rather than here in the Toucan
+  ;; model-layer functions... Not saying one pattern is better than the other (although this one does make it harder
+  ;; to do the wrong thing) but we should try to be consistent
   (u/prog1 card
-    ;; for native queries we need to make sure the user saving the card has native query permissions for the DB
-    ;; because users can always see native Cards and we don't want someone getting around their lack of permissions
-    ;; that way
-    (when (and *current-user-id*
-               (= (keyword (:type query)) :native))
-      (let [database (db/select-one ['Database :id :name], :id (:database query))]
-        (qp-perms/throw-if-cannot-run-new-native-query-referencing-db database)))))
+    ;; Make sure the User saving the Card has the appropriate permissions to run its query. We don't want Users saving
+    ;; Cards with queries they wouldn't be allowed to run!
+    (when *current-user-id*
+      (when-not (perms/set-has-full-permissions-for-set? @*current-user-permissions-set*
+                  (query-perms/perms-set query :throw-exceptions))
+        (throw (Exception. (tru "You do not have permissions to run ad-hoc native queries against Database {0}."
+                                (:database query))))))))
 
 (defn- post-insert [card]
   ;; if this Card has any native template tag parameters we need to update FieldValues for any Fields that are
@@ -101,6 +99,8 @@
       (field-values/update-field-values-for-on-demand-dbs! field-ids))))
 
 (defn- pre-update [{archived? :archived, query :dataset_query, :as card}]
+  ;; TODO - don't we need to be doing the same permissions check we do in `pre-insert` if the query gets changed? Or
+  ;; does that happen in the `PUT` endpoint?
   (u/prog1 card
     ;; if the Card is archived, then remove it from any Dashboards
     (when archived?

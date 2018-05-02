@@ -79,7 +79,7 @@
                        just-names-and-ids)}))
 
 (api/defendpoint GET "/:id"
-  "Fetch a specific (non-archived) Collection, including objects of a specific `model` that belong to it. If `model` is
+  "Fetch a specific (non-archived) Collection, including objects of a specigfic `model` that belong to it. If `model` is
   unspecified, it will return objects of all types."
   [id model]
   {model (s/maybe (s/enum "cards" "dashboards" "pulses"))}
