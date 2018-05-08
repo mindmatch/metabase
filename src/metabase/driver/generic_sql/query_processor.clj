@@ -399,8 +399,14 @@
 (defn- get-timestamp [^TimeZone tz]
   (fn [^ResultSet rs _ ^Integer i]
     (try
-      (.getTimestamp rs i (Calendar/getInstance tz))
+
+      (let [x       (.getTimestamp rs i (Calendar/getInstance tz))]
+        (println "Getting a timestamp" (str x))
+        x)
+
+
       (catch SQLException e
+        (println "Should not be here")
         (parse-date-as-string tz rs i)))))
 
 (defn- get-object [^ResultSet rs _ ^Integer i]
@@ -535,6 +541,7 @@
     (jdbc/db-do-prepared connection [sql])))
 
 (defn- run-query-without-timezone [driver settings connection query]
+  (println "running query for driver " driver)
   (do-in-transaction connection (partial run-query query nil)))
 
 (defn- run-query-with-timezone [driver {:keys [^String report-timezone] :as settings} connection query]

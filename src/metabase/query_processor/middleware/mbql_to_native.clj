@@ -27,5 +27,6 @@
           native-query (if-not (qputil/mbql-query? query)
                          query
                          (assoc query :native native-form))
+          _ (println "native form" native-form)
           results      (qp native-query)]
       (assoc results :native_form native-form))))

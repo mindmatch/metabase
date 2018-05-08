@@ -232,7 +232,12 @@
 
   DateTimeField
   (parse-value [this value]
-    (let [parsed-string-date (some-> value du/->Timestamp)]
+    (try
+      (println "Report timezone" (str (metabase.driver/report-timezone)) "resolved")
+      (catch Exception e
+        (println "Error????")
+        (.printStackTrace e)))
+    (let [parsed-string-date (some-> value (du/->Timestamp #_(java.util.TimeZone/getTimeZone (metabase.driver/report-timezone))))]
       (cond
         parsed-string-date
         (s/validate DateTimeValue (i/map->DateTimeValue {:field this, :value parsed-string-date}))

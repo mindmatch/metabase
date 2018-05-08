@@ -31,6 +31,80 @@
              :database (data/id)})
           [:data :rows]))
 
+;; Test native queries
+#_(expect-with-engine :bigquery
+  []
+  (get-in (qp/process-query
+            {:native   {:query (str "SELECT * "
+                                    "FROM [test_data.users] ")}
+             :type     :native
+             :database (data/id)})
+          [:data :rows]))
+#_(expect-with-engine :bigquery
+  [[4 "Simcha Yan" "2014-01-01T08:30:00.000Z"]]
+  (tu/with-temporary-setting-values [report-timezone "Europe/Brussels"]
+    (-> (data/run-query users
+          (ql/filter (ql/between $last_login
+                                 "2014-07-02"
+                                 "2014-07-03")))
+        qptest/rows)))
+
+#_(expect-with-engine :bigquery
+  [[4 "Simcha Yan" "2014-01-01T08:30:00.000Z"]]
+  (do #_tu/with-temporary-setting-values #_[report-timezone "Europe/Brussels"]
+      (with-redefs [clj-time.core/now (constantly (clj-time.core/date-time 2014 07 02 12 0 0))]
+        (qp/process-query {:native {:query "SELECT * FROM [test_data.users] WHERE CAST([test_data.users.last_login] AS date) = {{date}};"
+                                    :template_tags {:date {:id "foo"
+                                                           :name "date"
+                                                           :display_name "DATE" :type "date"}}}
+                           :type :native
+                           :database (data/id)
+                           :parameters [{:target ["variable" ["template-tag" "date"]]
+                                         :type "date", :value "yesterday"}]}))))
+
+
+
+#_(expect-with-engine :bigquery
+  [0]
+  (with-redefs [clj-time.core/now (constantly (clj-time.core/date-time 2014 07 2 23 0 0))]
+    (do #_#_tu/with-temporary-setting-values [report-timezone "Europe/Brussels"]
+      (-> (qp/process-query
+            {:database (data/id)
+             :type :native
+             :native     {
+                          :query         (format "SELECT COUNT(*) FROM [test_data.users] WHERE {{last_login}}")
+                          :template_tags {:last_login {:name "last_login", :display_name "Last Login", :type "dimension", :dimension ["field-id" (data/id :users :last_login)]}}}
+             :parameters [{:type "date/relative", :target ["dimension" ["template-tag" "last_login"]], :value "yesterday"}]})
+          qptest/rows
+          first))))
+
+(expect-with-engine :bigquery
+  [0]
+  (with-redefs [clj-time.core/now (constantly (clj-time.core/date-time 2014 07 2 23 0 0))]
+    (tu/with-temporary-setting-values [report-timezone "America/New_York"]
+      (let [#_inner-query
+            ;;            outer-query (-> (data/wrap-inner-query inner-query))
+            ]
+        (data/run-query users
+          (ql/filter
+           (ql/between (ql/datetime-field $last_login :day)
+                       (ql/relative-datetime -2 :day)
+                 (ql/relative-datetime -1 :day)))
+          (ql/aggregation (ql/count))
+
+          #_              outer-query
+          #_{:database   (data/id)
+             :type       :query
+             :query      (data/query users
+                           (ql/aggregation (ql/count)))
+             :parameters [{:hash   "abc123"
+                           :name   "foo"
+                           :type   "date"
+                           :target ["dimension" ["field-id" (data/id :users :last_login)]]
+                           :value  "yeseterday"}]})))))
+
+
+
 ;;; table-rows-sample
 (expect-with-engine :bigquery
   [[1 "Red Medicine"]
@@ -43,7 +117,6 @@
           (Field (data/id :venues :name))])
        (sort-by first)
        (take 5)))
-
 
 ;; make sure that BigQuery native queries maintain the column ordering specified in the SQL -- post-processing
 ;; ordering shouldn't apply (Issue #2821)

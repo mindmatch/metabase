@@ -373,10 +373,12 @@
 
   Date
   (->replacement-snippet-info [{:keys [s]}]
+    (println "Date found" du/*report-timezone* "s " s "after" (du/->Timestamp s))
     (honeysql->replacement-snippet-info (du/->Timestamp s)))
 
   DateRange
   (->replacement-snippet-info [{:keys [start end]}]
+    (println "Date range found" du/*report-timezone* "Start and end" start end)
     (cond
       (= start end) {:replacement-snippet "= ?",             :prepared-statement-args [(du/->Timestamp start)]}
       (nil? start)  {:replacement-snippet "< ?",             :prepared-statement-args [(du/->Timestamp end)]}

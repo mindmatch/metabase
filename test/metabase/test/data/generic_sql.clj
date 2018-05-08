@@ -301,6 +301,7 @@
   ampersand (`⅋`) is understood as an \"escaped\" semicolon in the resulting SQL statement."
   [driver context dbdef sql  & {:keys [execute!] :or {execute! default-execute-sql!}}]
   (when sql
+    (println "Just saw sql" sql)
     (doseq [statement (map s/trim (s/split sql #";+"))]
       (when (seq statement)
         (execute! driver context dbdef (s/replace statement #"⅋" ";"))))))
