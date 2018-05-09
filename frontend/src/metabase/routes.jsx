@@ -34,7 +34,6 @@ import {
 } from "metabase/components/BrowseApp";
 
 import QueryBuilder from "metabase/query_builder/containers/QueryBuilder.jsx";
-import QuestionIndex from "metabase/questions/containers/QuestionIndex.jsx";
 import Archive from "metabase/questions/containers/Archive.jsx";
 import CollectionPage from "metabase/questions/containers/CollectionPage.jsx";
 import CollectionEdit from "metabase/questions/containers/CollectionEdit.jsx";
@@ -214,33 +213,12 @@ export const getRoutes = store => (
       {/* MAIN */}
       <Route component={IsAuthenticated}>
         {/* The global all hands rotues, things in here are for all the folks */}
-        <Route path="/" component={CollectionLanding}>
-          <Route path="segments" title={t`Segments`} component={Segments} />
-
-          <Route path="metrics" title={t`metrics`} component={Metrics} />
-
-          <Route path="/questions" title={t`Questions`}>
-            <IndexRoute component={QuestionIndex} />
-            <Route
-              path="search"
-              title={({ location: { query: { q } } }) => t`Search` + ": " + q}
-              component={SearchResults}
-            />
-            <Route path="archive" title={t`Archive`} component={Archive} />
-            <Route
-              path="collections/:collectionSlug"
-              component={CollectionPage}
-            />
-          </Route>
-        </Route>
+        <Route path="/" component={CollectionLanding} />
 
         <Route path="/explore" component={PostSetupApp} />
         <Route path="/explore/:databaseId" component={PostSetupApp} />
 
-        <Route
-          path="collections/:collectionSlug"
-          component={CollectionLanding}
-        />
+        <Route path="collection/:collectionId" component={CollectionLanding} />
 
         <Route path="activity" component={HomepageApp} />
 
@@ -291,6 +269,8 @@ export const getRoutes = store => (
         <Route path="permissions" component={CollectionPermissions} />
         <Route path=":collectionId" component={CollectionEdit} />
       </Route>
+
+      <Route path="questions/archive" title={t`Archive`} component={Archive} />
 
       {/* REFERENCE */}
       <Route path="/reference" title={`Data Reference`}>
@@ -383,63 +363,63 @@ export const getRoutes = store => (
 
       {/* USER */}
       <Route path="/user/edit_current" component={UserSettingsApp} />
-    </Route>
 
-    {/* ADMIN */}
-    <Route path="/admin" title={t`Admin`} component={IsAdmin}>
-      <IndexRedirect to="/admin/settings" />
+      {/* ADMIN */}
+      <Route path="/admin" title={t`Admin`} component={IsAdmin}>
+        <IndexRedirect to="/admin/settings" />
 
-      <Route path="databases" title={t`Databases`}>
-        <IndexRoute component={DatabaseListApp} />
-        <Route path="create" component={DatabaseEditApp} />
-        <Route path=":databaseId" component={DatabaseEditApp} />
-      </Route>
-
-      <Route path="datamodel" title={t`Data Model`}>
-        <IndexRedirect to="database" />
-        <Route path="database" component={MetadataEditorApp} />
-        <Route path="database/:databaseId" component={MetadataEditorApp} />
-        <Route
-          path="database/:databaseId/:mode"
-          component={MetadataEditorApp}
-        />
-        <Route
-          path="database/:databaseId/:mode/:tableId"
-          component={MetadataEditorApp}
-        />
-        <Route
-          path="database/:databaseId/:mode/:tableId/settings"
-          component={TableSettingsApp}
-        />
-        <Route
-          path="database/:databaseId/:mode/:tableId/:fieldId"
-          component={FieldApp}
-        />
-        <Route path="metric/create" component={MetricApp} />
-        <Route path="metric/:id" component={MetricApp} />
-        <Route path="segment/create" component={SegmentApp} />
-        <Route path="segment/:id" component={SegmentApp} />
-        <Route path=":entity/:id/revisions" component={RevisionHistoryApp} />
-      </Route>
-
-      {/* PEOPLE */}
-      <Route path="people" title={t`People`} component={AdminPeopleApp}>
-        <IndexRoute component={PeopleListingApp} />
-        <Route path="groups" title={t`Groups`}>
-          <IndexRoute component={GroupsListingApp} />
-          <Route path=":groupId" component={GroupDetailApp} />
+        <Route path="databases" title={t`Databases`}>
+          <IndexRoute component={DatabaseListApp} />
+          <Route path="create" component={DatabaseEditApp} />
+          <Route path=":databaseId" component={DatabaseEditApp} />
         </Route>
-      </Route>
 
-      {/* SETTINGS */}
-      <Route path="settings" title={t`Settings`}>
-        <IndexRedirect to="/admin/settings/setup" />
-        {/* <IndexRoute component={SettingsEditorApp} /> */}
-        <Route path=":section/:authType" component={SettingsEditorApp} />
-        <Route path=":section" component={SettingsEditorApp} />
-      </Route>
+        <Route path="datamodel" title={t`Data Model`}>
+          <IndexRedirect to="database" />
+          <Route path="database" component={MetadataEditorApp} />
+          <Route path="database/:databaseId" component={MetadataEditorApp} />
+          <Route
+            path="database/:databaseId/:mode"
+            component={MetadataEditorApp}
+          />
+          <Route
+            path="database/:databaseId/:mode/:tableId"
+            component={MetadataEditorApp}
+          />
+          <Route
+            path="database/:databaseId/:mode/:tableId/settings"
+            component={TableSettingsApp}
+          />
+          <Route
+            path="database/:databaseId/:mode/:tableId/:fieldId"
+            component={FieldApp}
+          />
+          <Route path="metric/create" component={MetricApp} />
+          <Route path="metric/:id" component={MetricApp} />
+          <Route path="segment/create" component={SegmentApp} />
+          <Route path="segment/:id" component={SegmentApp} />
+          <Route path=":entity/:id/revisions" component={RevisionHistoryApp} />
+        </Route>
 
-      {getAdminPermissionsRoutes(store)}
+        {/* PEOPLE */}
+        <Route path="people" title={t`People`} component={AdminPeopleApp}>
+          <IndexRoute component={PeopleListingApp} />
+          <Route path="groups" title={t`Groups`}>
+            <IndexRoute component={GroupsListingApp} />
+            <Route path=":groupId" component={GroupDetailApp} />
+          </Route>
+        </Route>
+
+        {/* SETTINGS */}
+        <Route path="settings" title={t`Settings`}>
+          <IndexRedirect to="/admin/settings/setup" />
+          {/* <IndexRoute component={SettingsEditorApp} /> */}
+          <Route path=":section/:authType" component={SettingsEditorApp} />
+          <Route path=":section" component={SettingsEditorApp} />
+        </Route>
+
+        {getAdminPermissionsRoutes(store)}
+      </Route>
     </Route>
 
     {/* INTERNAL */}

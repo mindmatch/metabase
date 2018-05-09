@@ -99,8 +99,10 @@
     (perms/grant-collection-read-permissions! (group/all-users) collection)
     ((user->client :rasta) :get 404 (str "collection/" (u/get-id collection)))))
 
-(defn- remove-ids-from-collection-detail [results]
-  (into {} (for [[k items] (select-keys results [:name :cards :dashboards :pulses])]
+(defn- remove-ids-from-collection-detail [results & {:keys [keep-collection-id?]
+                                                     :or {keep-collection-id? false}}]
+  (into {} (for [[k items] (select-keys results (cond->> [:name :cards :dashboards :pulses]
+                                                  keep-collection-id? (cons :id)))]
              [k (if-not (sequential? items)
                   items
                   (for [item items]
@@ -238,16 +240,18 @@
 ;; Make sure you can see everything for Users that can see everything
 (expect
   {:name       "Root Collection"
+   :id         "root"
    :cards      [{:name "Birthday Card"}]
    :dashboards [{:name "Dine & Dashboard"}]
    :pulses     [{:name "Electro-Magnetic Pulse"}]}
   (with-some-children-of-collection nil
     (-> ((user->client :crowberto) :get 200 "collection/root")
-        remove-ids-from-collection-detail)))
+        (remove-ids-from-collection-detail :keep-collection-id? true))))
 
 ;; ...but we don't let you see stuff you wouldn't otherwise be allowed to see
 (expect
   {:name       "Root Collection"
+   :id         "root"
    :cards      []
    :dashboards [{:name "Dine & Dashboard"}]
    :pulses     [{:name "Electro-Magnetic Pulse"}]}
@@ -262,15 +266,16 @@
         :dataset_query {:database (u/get-id db), :type :query, :query {:source-table (u/get-id table)}})
       ;; ok, a regular user shouldn't get to see it any more :(
       (-> ((user->client :rasta) :get 200 "collection/root")
-          remove-ids-from-collection-detail))))
+          (remove-ids-from-collection-detail :keep-collection-id? true)))))
 
 ;; Make sure this endpoint can also filter things
 (expect
   {:name  "Root Collection"
+   :id    "root"
    :cards [{:name "Birthday Card"}]}
   (with-some-children-of-collection nil
     (-> ((user->client :crowberto) :get 200 "collection/root?model=cards")
-        remove-ids-from-collection-detail)))
+        (remove-ids-from-collection-detail :keep-collection-id? true))))
 
 
 ;;; ----------------------------------- Effective Children, Ancestors, & Location ------------------------------------

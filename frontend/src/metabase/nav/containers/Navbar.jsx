@@ -8,6 +8,8 @@ import { connect } from "react-redux";
 import { push } from "react-router-redux";
 import { Link } from "react-router";
 
+import { createDashboard } from "metabase/dashboards/dashboards";
+
 import { normal, saturated } from "metabase/lib/colors";
 
 import Button from "metabase/components/Button.jsx";
@@ -15,7 +17,7 @@ import Icon from "metabase/components/Icon.jsx";
 import LogoIcon from "metabase/components/LogoIcon.jsx";
 import PopoverWithTrigger from "metabase/components/PopoverWithTrigger";
 
-import ModalWithTrigger from "metabase/components/ModalWithTrigger";
+import Modal from "metabase/components/Modal";
 
 import CreateDashboardModal from "metabase/components/CreateDashboardModal";
 import CollectionEdit from "metabase/questions/containers/CollectionCreate";
@@ -32,6 +34,7 @@ const mapStateToProps = (state, props) => ({
 
 const mapDispatchToProps = {
   onChangeLocation: push,
+  createDashboard,
 };
 
 const AdminNavItem = ({ name, path, currentPath }) => (
@@ -74,8 +77,15 @@ class SearchBar extends React.Component {
 }
 */
 
+const MODAL_NEW_DASHBOARD = "MODAL_NEW_DASHBOARD";
+const MODAL_NEW_COLLECTION = "MODAL_NEW_COLLECTION";
+
 @connect(mapStateToProps, mapDispatchToProps)
 export default class Navbar extends Component {
+  state = {
+    modal: null,
+  };
+
   static propTypes = {
     context: PropTypes.string.isRequired,
     path: PropTypes.string.isRequired,
@@ -84,6 +94,22 @@ export default class Navbar extends Component {
 
   isActive(path) {
     return this.props.path.startsWith(path);
+  }
+
+  setModal(modal) {
+    this.setState({ modal });
+    if (this._newPopover) {
+      this._newPopover.close();
+    }
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.location !== this.props.location) {
+      this.setState({ modal: null });
+      if (this._newPopover) {
+        this._newPopover.close();
+      }
+    }
   }
 
   renderAdminNav() {
@@ -125,6 +151,7 @@ export default class Navbar extends Component {
 
           <ProfileLink {...this.props} />
         </div>
+        {this.renderModal()}
       </nav>
     );
   }
@@ -143,6 +170,7 @@ export default class Navbar extends Component {
             </Link>
           </li>
         </ul>
+        {this.renderModal()}
       </nav>
     );
   }
@@ -154,7 +182,7 @@ export default class Navbar extends Component {
           backgroundColor: "#FDFDFD",
           borderBottom: "1px solid #DCE1E4",
         }}
-        className="relative"
+        className="relative z4"
         align="center"
       >
         <Box className="">
@@ -170,57 +198,56 @@ export default class Navbar extends Component {
         <Box my={1} p={1} className="wrapper lg-wrapper--trim">
           {/* <SearchBar /> */}
         </Box>
-        <Flex className="ml-auto" align="center">
+        <Flex ml="auto" align="center">
           <Box mx={1}>
             <Link to="reference">Reference</Link>
           </Box>
           <PopoverWithTrigger
+            ref={e => (this._newPopover = e)}
             triggerElement={
               <Button medium primary>
                 New
               </Button>
             }
           >
-            <Box p={3} style={{ minWidth: 300 }}>
+            <Box py={2} px={3} style={{ minWidth: 300 }}>
               <Box my={2}>
                 <Link to="question/new">
                   <Flex align="center" style={{ color: normal.red }}>
-                    <Icon name="beaker" />
+                    <Icon name="beaker" mr={1} />
                     <h3>Question</h3>
                   </Flex>
                 </Link>
               </Box>
               <Box my={2}>
-                <ModalWithTrigger
-                  triggerElement={
-                    <Flex align="center" style={{ color: normal.blue }}>
-                      <Icon name="dashboard" />
-                      <h3>Dashboard</h3>
-                    </Flex>
-                  }
+                <Flex
+                  align="center"
+                  style={{ color: normal.blue }}
+                  className="cursor-pointer"
+                  onClick={() => this.setModal(MODAL_NEW_DASHBOARD)}
                 >
-                  <CreateDashboardModal />
-                </ModalWithTrigger>
+                  <Icon name="dashboard" mr={1} />
+                  <h3>Dashboard</h3>
+                </Flex>
               </Box>
               <Box my={2}>
                 <Link to="pulse/new">
                   <Flex align="center" style={{ color: saturated.yellow }}>
-                    <Icon name="pulse" />
+                    <Icon name="pulse" mr={1} />
                     <h3>Pulse</h3>
                   </Flex>
                 </Link>
               </Box>
               <Box my={2}>
-                <ModalWithTrigger
-                  triggerElement={
-                    <Flex align="center" style={{ color: "#93B3C9" }}>
-                      <Icon name="all" />
-                      <h3>Collection</h3>
-                    </Flex>
-                  }
+                <Flex
+                  align="center"
+                  style={{ color: "#93B3C9" }}
+                  className="cursor-pointer"
+                  onClick={() => this.setModal(MODAL_NEW_COLLECTION)}
                 >
-                  <CollectionEdit />
-                </ModalWithTrigger>
+                  <Icon name="all" mr={1} />
+                  <h3>Collection</h3>
+                </Flex>
               </Box>
             </Box>
           </PopoverWithTrigger>
@@ -231,8 +258,28 @@ export default class Navbar extends Component {
           </Box>
           <ProfileLink {...this.props} />
         </Flex>
+        {this.renderModal()}
       </Flex>
     );
+  }
+
+  renderModal() {
+    const { modal } = this.state;
+    if (modal) {
+      return (
+        <Modal onClose={() => this.setState({ modal: null })}>
+          {modal === MODAL_NEW_COLLECTION ? (
+            <CollectionEdit />
+          ) : modal === MODAL_NEW_DASHBOARD ? (
+            <CreateDashboardModal
+              createDashboard={this.props.createDashboard}
+            />
+          ) : null}
+        </Modal>
+      );
+    } else {
+      return null;
+    }
   }
 
   render() {
