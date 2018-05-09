@@ -1,56 +1,88 @@
 import React from "react";
-import { Box, Flex, Subhead } from "rebass";
+import { Box, Flex, Subhead, Truncate } from "rebass";
 import { Link, withRouter } from "react-router";
+import { t } from "c-3po";
+import { connect } from "react-redux";
 
 import * as Urls from "metabase/lib/urls";
 import { normal } from "metabase/lib/colors";
-
-import { CollectionsApi } from "metabase/services";
 
 import Icon from "metabase/components/Icon";
 import CollectionListLoader from "metabase/components/CollectionListLoader";
 import CollectionItemsLoader from "metabase/components/CollectionItemsLoader";
 import EntityMenu from "metabase/components/EntityMenu";
 
-//import SegmentList from "metabase/components/SegmentList";
-//import MetricList from "metabase/components/MetricList";
-
 import LandingNav from "metabase/components/LandingNav";
 
-const CollectionList = ({ collectionSlug }) => {
+// TODO - this should be a selector
+const mapStateToProps = (state, props) => ({
+  currentCollection:
+    (state.entities.collections &&
+      state.entities.collections[props.params.collectionId]) ||
+    {},
+});
+
+const Card = Box.extend`
+  background-color: white;
+  border: 1px solid ${normal.grey1};
+  border-radius: 6px;
+  box-shadow: 0 1px 3px ${normal.grey1};
+`;
+
+const CollectionItem = ({ collection }) => (
+  <Link to={`collection/${collection.id}`}>
+    <Card>
+      <Flex
+        align="center"
+        my={1}
+        px={1}
+        py={1}
+        key={`collection-${collection.id}`}
+      >
+        <Icon name="all" mx={2} />
+        <Truncate>{collection.name}</Truncate>
+      </Flex>
+    </Card>
+  </Link>
+);
+
+const CollectionList = () => {
   return (
-    <Box>
+    <Box mb={2}>
       <CollectionListLoader>
-        {({ collections, loading, error }) => {
-          if (loading) {
-            return <Box>Loading...</Box>;
-          }
+        {({ collections }) => {
           return (
-            <Flex wrap>
+            <Grid>
               {collections.map(collection => (
-                <Box w={1 / 4}>
-                  <Flex
-                    align="center"
-                    my={1}
-                    px={1}
-                    py={2}
-                    key={`collection-${collection.id}`}
-                    className="bordered rounded shadowed"
-                  >
-                    <Icon name="all" className="mr1" />
-                    <Link to={`collections/${collection.slug}`}>
-                      {collection.name}
-                    </Link>
-                  </Flex>
-                </Box>
+                <GridItem key={collection.id}>
+                  <CollectionItem collection={collection} />
+                </GridItem>
               ))}
-            </Flex>
+            </Grid>
           );
         }}
       </CollectionListLoader>
     </Box>
   );
 };
+
+const GridItem = ({ children, w, px, py }) => (
+  <Box w={w} px={px} py={py}>
+    {children}
+  </Box>
+);
+
+GridItem.defaultProps = {
+  w: 1 / 4,
+  px: 1,
+  py: 1,
+};
+
+const Grid = ({ children }) => (
+  <Flex wrap mx={-2}>
+    {children}
+  </Flex>
+);
 
 const ItemCard = ({ children, background }) => {
   return (
@@ -80,7 +112,7 @@ class DefaultLanding extends React.Component {
           <Link to={Urls.question(item.id)}>
             <ItemCard>
               <Icon name="beaker" />
-              <h3 className="mt-auto">{item.name}</h3>
+              <Truncate mt="auto">{item.name}</Truncate>
             </ItemCard>
           </Link>
         );
@@ -89,29 +121,29 @@ class DefaultLanding extends React.Component {
           <Link to={Urls.dashboard(item.id)}>
             <ItemCard background="white">
               <Icon name="dashboard" color={normal.blue} />
-              <h3 className="mt-auto">{item.name}</h3>
+              <Truncate mt="auto">{item.name}</Truncate>
             </ItemCard>
           </Link>
         );
       case "pulse":
         return (
-          <Flex direction="column">
+          <Link to={Urls.pulseEdit(item.id)}>
             <ItemCard>
               <Icon name="pulse" color={normal.yellow} />
-              <h3 className="mt-auto">{item.name}</h3>
+              <Truncate mt="auto">{item.name}</Truncate>
             </ItemCard>
-          </Flex>
+          </Link>
         );
     }
   }
   render() {
-    const { currentCollection, collectionSlug, location } = this.props;
+    const { collectionId, location } = this.props;
     return (
       <Box w="100%">
         {// HACK for now to only show the colleciton list on the root
         // colleciton until we have a notion of nested collections
-        !collectionSlug && <CollectionList />}
-        <CollectionItemsLoader collectionId={currentCollection.id}>
+        !collectionId && <CollectionList />}
+        <CollectionItemsLoader collectionId={collectionId || "root"}>
           {({ loading, error, allItems, pulses, cards, dashboards }) => {
             if (loading) {
               return <Box>Loading...</Box>;
@@ -119,6 +151,7 @@ class DefaultLanding extends React.Component {
 
             let items = allItems;
 
+            // Hack in filtering
             if (location.query.show) {
               switch (location.query.show) {
                 case "dashboards":
@@ -136,14 +169,12 @@ class DefaultLanding extends React.Component {
               }
             }
 
-            console.log(items);
-
             return (
-              <Flex wrap>
+              <Grid>
                 {items.map(item => (
-                  <Box w={1 / 4}>{this._renderItem(item)}</Box>
+                  <GridItem>{this._renderItem(item)}</GridItem>
                 ))}
-              </Flex>
+              </Grid>
             );
           }}
         </CollectionItemsLoader>
@@ -152,46 +183,26 @@ class DefaultLanding extends React.Component {
   }
 }
 
+@connect(mapStateToProps)
 class CollectionLanding extends React.Component {
-  state = {
-    collections: [],
-  };
-  componentWillMount() {
-    this._loadCollections();
-  }
-  /* quick hack to look up collection information for slug matching,
-   * this will eventually happen in redux land */
-  async _loadCollections() {
-    try {
-      const collections = await CollectionsApi.list();
-      this.setState({ collections });
-    } catch (error) {}
-  }
   render() {
-    const { children } = this.props;
-    const collectionSlug = this.props.params.collectionSlug;
-    if (!this.state.collections) {
-      return <Box>Loading...</Box>;
-    }
-    /* TODO - this will live in redux land  */
-    const currentCollection =
-      this.state.collections.filter(c => c.slug === collectionSlug)[0] || {};
-    console.log("currentCollection", currentCollection);
+    const { children, params, currentCollection } = this.props;
+    const collectionId = params.collectionId;
     return (
       <Box>
         <Box className="wrapper lg-wrapper--trim">
           <Flex py={3}>
-            {/* TODO - this should be the collection or instance name */}
             <Subhead>
               <Flex align="center">
                 <Flex>
-                  <Link to="/">Metabase, Inc</Link>
+                  {/* TODO - figure out the right way to grab this */}
+                  <Link to="/">{window.MetabaseBootstrap.site_name}</Link>
                 </Flex>
-                {currentCollection && (
+                {currentCollection.name && (
                   <Flex align="center">
-                    <Icon name="chevronright" className="ml2 mr2" />
+                    <Icon name="chevronright" m={2} />
                     <Flex>
-                      <Link to={`/collections/${currentCollection.slug}`}>
+                      <Link to={`/collection/${currentCollection.id}`}>
                         {currentCollection.name}
                       </Link>
                     </Flex>
@@ -200,44 +211,53 @@ class CollectionLanding extends React.Component {
               </Flex>
             </Subhead>
 
-            <Box ml="auto">
+            <Flex ml="auto">
+              <Box mx={1}>
+                <EntityMenu
+                  items={[
+                    {
+                      title: t`Edit this collection`,
+                      icon: "editdocument",
+                      link: `/collections/${currentCollection.id}`,
+                    },
+                    {
+                      title: t`Edit permissions`,
+                      icon: "lock",
+                      link: `/collections/permissions?collectionId=${
+                        currentCollection.id
+                      }`,
+                    },
+                  ]}
+                  triggerIcon="pencil"
+                />
+              </Box>
               <EntityMenu
                 items={[
                   {
-                    action: function noRefCheck() {},
-                    icon: "editdocument",
-                    title: "Edit this question",
+                    title: t`View the question archive`,
+                    icon: "viewArchive",
+                    link: `/questions/archive/`,
                   },
                   {
-                    icon: "history",
-                    link: "/derp",
-                    title: "View revision history",
-                  },
-                  {
-                    action: function noRefCheck() {},
-                    icon: "move",
-                    title: "Move",
-                  },
-                  {
-                    action: function noRefCheck() {},
-                    icon: "archive",
-                    title: "Archive",
+                    title: t`View the dashboard archive`,
+                    icon: "viewArchive",
+                    link: `/dashboards/archive`,
                   },
                 ]}
-                triggerIcon="pencil"
+                triggerIcon="burger"
               />
-            </Box>
+            </Flex>
           </Flex>
         </Box>
         <Box className="relative">
-          <LandingNav collectionSlug={collectionSlug} />
+          <LandingNav collectionId={collectionId} />
           <Box className="wrapper lg-wrapper--trim">
             {children ? (
               children
             ) : (
               <DefaultLanding
                 currentCollection={currentCollection}
-                collectionSlug={collectionSlug}
+                collectionId={collectionId}
               />
             )}
           </Box>

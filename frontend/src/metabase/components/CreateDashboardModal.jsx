@@ -1,9 +1,14 @@
 import React, { Component } from "react";
 import PropTypes from "prop-types";
+import { Box } from "rebass";
 import { t } from "c-3po";
-import FormField from "metabase/components/FormField.jsx";
+import FormField from "metabase/components/form/FormField.jsx";
 import ModalContent from "metabase/components/ModalContent.jsx";
+
 import Button from "metabase/components/Button.jsx";
+import Select, { Option } from "metabase/components/Select.jsx";
+
+import CollectionListLoader from "metabase/components/CollectionListLoader";
 
 export default class CreateDashboardModal extends Component {
   constructor(props, context) {
@@ -16,11 +21,12 @@ export default class CreateDashboardModal extends Component {
       name: null,
       description: null,
       errors: null,
+      collection_id: null,
     };
   }
 
   static propTypes = {
-    createDashboardFn: PropTypes.func.isRequired,
+    createDashboard: PropTypes.func.isRequired,
     onClose: PropTypes.func,
   };
 
@@ -35,28 +41,24 @@ export default class CreateDashboardModal extends Component {
   createNewDash(event) {
     event.preventDefault();
 
-    var name = this.state.name && this.state.name.trim();
-    var description = this.state.description && this.state.description.trim();
+    let name = this.state.name && this.state.name.trim();
+    let description = this.state.description && this.state.description.trim();
 
     // populate a new Dash object
-    var newDash = {
+    let newDash = {
       name: name && name.length > 0 ? name : null,
       description: description && description.length > 0 ? description : null,
+      collection_id: this.state.collection_id,
     };
 
-    // create a new dashboard
-    var component = this;
-    this.props.createDashboardFn(newDash).then(null, function(error) {
-      component.setState({
-        errors: error,
-      });
-    });
+    this.props.createDashboard(newDash, { redirect: true });
+    this.props.onClose();
   }
 
   render() {
-    var formError;
+    let formError;
     if (this.state.errors) {
-      var errorMessage = t`Server error encountered`;
+      let errorMessage = t`Server error encountered`;
       if (this.state.errors.data && this.state.errors.data.message) {
         errorMessage = this.state.errors.data.message;
       }
@@ -65,9 +67,9 @@ export default class CreateDashboardModal extends Component {
       formError = <span className="text-error px2">{errorMessage}</span>;
     }
 
-    var name = this.state.name && this.state.name.trim();
+    let name = this.state.name && this.state.name.trim();
 
-    var formReady = name !== null && name !== "";
+    let formReady = name !== null && name !== "";
 
     return (
       <ModalContent
@@ -86,9 +88,9 @@ export default class CreateDashboardModal extends Component {
         <form className="Modal-form" onSubmit={this.createNewDash}>
           <div className="Form-inputs">
             <FormField
+              name="name"
               displayName={t`Name`}
-              fieldName="name"
-              errors={this.state.errors}
+              formError={this.state.errors}
             >
               <input
                 className="Form-input full"
@@ -101,9 +103,9 @@ export default class CreateDashboardModal extends Component {
             </FormField>
 
             <FormField
+              name="description"
               displayName={t`Description`}
-              fieldName="description"
-              errors={this.state.errors}
+              formError={this.state.errors}
             >
               <input
                 className="Form-input full"
@@ -113,6 +115,41 @@ export default class CreateDashboardModal extends Component {
                 onChange={this.setDescription}
               />
             </FormField>
+            <CollectionListLoader>
+              {({ collections, error, loading }) => {
+                if (loading) {
+                  return <Box>Loading...</Box>;
+                }
+                return (
+                  <FormField
+                    displayName={t`Which collection should this go in?`}
+                    fieldName="collection_id"
+                    errors={this.state.errors}
+                  >
+                    <Select
+                      value={this.state.collection_id}
+                      onChange={({ target }) =>
+                        this.setState({ collection_id: target.value })
+                      }
+                    >
+                      {[{ name: t`None`, id: null }]
+                        .concat(collections)
+                        .map((collection, index) => (
+                          <Option
+                            key={index}
+                            value={collection.id}
+                            icon={collection.id != null ? "collection" : null}
+                            iconColor={collection.color}
+                            iconSize={18}
+                          >
+                            {collection.name}
+                          </Option>
+                        ))}
+                    </Select>
+                  </FormField>
+                );
+              }}
+            </CollectionListLoader>
           </div>
         </form>
       </ModalContent>

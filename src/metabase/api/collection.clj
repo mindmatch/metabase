@@ -95,6 +95,7 @@
   {model (s/maybe (s/enum "cards" "dashboards" "pulses"))}
   (merge
    {:name                (tru "Root Collection")
+    :id                  "root"
     :effective_location  "/"
     :effective_children  (collection/effective-children collection/root-collection)
     :effective_ancestors []}
