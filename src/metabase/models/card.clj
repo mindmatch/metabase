@@ -19,6 +19,7 @@
              [revision :as revision]]
             [metabase.models.query.permissions :as query-perms]
             [metabase.util.query :as q]
+            [metabase.query-processor.util :as qputil]
             [puppetlabs.i18n.core :refer [tru]]
             [toucan
              [db :as db]
@@ -77,6 +78,28 @@
             :query_type  (keyword query-type)})
          card))
 
+(defn- check-for-circular-source-query-references
+  "Check that a `card`, if it is using another Card as its source, does not have circular references between source
+  Cards. (e.g. Card A cannot use itself as a source, or if A uses Card B as a source, Card B cannot use Card A, and so
+  forth.)"
+  [{query :dataset_query, id :id}] ; don't use `u/get-id` here so that we can use this with `pre-insert` too
+  (loop [query query, ids-already-seen #{id}]
+    (let [source-card-id (qputil/query->source-card-id query)]
+      (cond
+        (not source-card-id)
+        :ok
+
+        (ids-already-seen source-card-id)
+        (throw
+         (ex-info (tru "Cannot save Question: source query has circular references.")
+           {:status-code 400}))
+
+        :else
+        (recur (or (db/select-one-field :dataset_query Card :id source-card-id)
+                   (throw (ex-info (tru "Card {0} does not exist." source-card-id)
+                            {:status-code 404})))
+               (conj ids-already-seen source-card-id))))))
+
 (defn- pre-insert [{query :dataset_query, :as card}]
   ;; TODO - we usually check permissions to save/update stuff in the API layer rather than here in the Toucan
   ;; model-layer functions... Not saying one pattern is better than the other (although this one does make it harder
@@ -88,7 +111,9 @@
       (when-not (perms/set-has-full-permissions-for-set? @*current-user-permissions-set*
                   (query-perms/perms-set query :throw-exceptions))
         (throw (Exception. (tru "You do not have permissions to run ad-hoc native queries against Database {0}."
-                                (:database query))))))))
+                                (:database query))))))
+    ;; make sure this Card doesn't have circular source query references
+    (check-for-circular-source-query-references card)))
 
 (defn- post-insert [card]
   ;; if this Card has any native template tag parameters we need to update FieldValues for any Fields that are
@@ -119,7 +144,10 @@
                       "Is Now:" new-param-field-ids
                       "Newly Added:" newly-added-param-field-ids)
             ;; Now update the FieldValues for the Fields referenced by this Card.
-            (field-values/update-field-values-for-on-demand-dbs! newly-added-param-field-ids)))))))
+            (field-values/update-field-values-for-on-demand-dbs! newly-added-param-field-ids)))))
+    ;; make sure this Card doesn't have circular source query references if we're updating the query
+    (when (:dataset_query card)
+      (check-for-circular-source-query-references card))))
 
 (defn- pre-delete [{:keys [id]}]
   (db/delete! 'PulseCard :card_id id)
@@ -140,8 +168,7 @@
                                        :embedding_params       :json
                                        :query_type             :keyword
                                        :result_metadata        :json
-                                       :visualization_settings :json
-                                       :read_permissions       :json-set})
+                                       :visualization_settings :json})
           :properties     (constantly {:timestamped? true})
           :pre-update     (comp populate-query-fields pre-update)
           :pre-insert     (comp populate-query-fields pre-insert)

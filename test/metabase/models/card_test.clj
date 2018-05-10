@@ -111,21 +111,9 @@
   "Skip normal pre-update stuff so we can force a Card to get into an invalid state."
   [card source-table]
   (db/update! Card {:where [:= :id (u/get-id card)]
-                    :set   (-> (card-with-source-table source-table
-                                 ;; clear out cached read permissions to make sure those aren't used for calcs
-                                 :read_permissions nil)
+                    :set   (-> (card-with-source-table source-table)
                                ;; we have to manually JSON-encode since we're skipping normal pre-update stuff
                                (update :dataset_query json/generate-string))}))
-
-;; No circular references = it should work!
-(expect
-  {:card-a #{(perms/object-path (data/id) "PUBLIC" (data/id :venues))}
-   :card-b #{(perms/object-path (data/id) "PUBLIC" (data/id :venues))}}
-  ;; Make two cards. Card B references Card A.
-  (tt/with-temp* [Card [card-a (card-with-source-table (data/id :venues))]
-                  Card [card-b (card-with-source-table (str "card__" (u/get-id card-a)))]]
-    {:card-a (#'card/card-perms-set-taking-collection-etc-into-account (Card (u/get-id card-a)) :read)
-     :card-b (#'card/card-perms-set-taking-collection-etc-into-account (Card (u/get-id card-b)) :read)}))
 
 ;; If a Card uses itself as a source, perms calculations should fallback to the 'only admins can see it' perms of
 ;; #{"/db/0"} (DB 0 will never exist, so regular users will never get to see it, but because admins have root perms,
@@ -137,16 +125,6 @@
     (db/update! Card (u/get-id card)
       (card-with-source-table (str "card__" (u/get-id card))))))
 
-;; if for some reason somebody such an invalid Card was already saved in the DB make sure that calculating permissions
-;; for it just returns the admin-only #{"/db/0"} perms set
-(expect
-  #{"/db/0/"}
-  (tt/with-temp Card [card (card-with-source-table (data/id :venues))]
-    ;; now *make* the Card reference itself
-    (force-update-card-to-reference-source-table! card (str "card__" (u/get-id card)))
-    ;; ok. Calculate perms. Should fail and fall back to admin-only perms
-    (#'card/card-perms-set-taking-collection-etc-into-account (Card (u/get-id card)) :read)))
-
 ;; Do the same stuff with circular reference between two Cards... (A -> B -> A)
 (expect
   Exception
@@ -154,16 +132,6 @@
                   Card [card-b (card-with-source-table (str "card__" (u/get-id card-a)))]]
     (db/update! Card (u/get-id card-a)
       (card-with-source-table (str "card__" (u/get-id card-b))))))
-
-(expect
-  #{"/db/0/"}
-  ;; Make two cards. Card B references Card A
-  (tt/with-temp* [Card [card-a (card-with-source-table (data/id :venues))]
-                  Card [card-b (card-with-source-table (str "card__" (u/get-id card-a)))]]
-    ;; force Card A to reference Card B
-    (force-update-card-to-reference-source-table! card-a (str "card__" (u/get-id card-b)))
-    ;; perms calc should fail and we should get admin-only perms
-    (#'card/card-perms-set-taking-collection-etc-into-account (Card (u/get-id card-a)) :read)))
 
 ;; ok now try it with A -> C -> B -> A
 (expect
@@ -173,49 +141,3 @@
                   Card [card-c (card-with-source-table (str "card__" (u/get-id card-b)))]]
     (db/update! Card (u/get-id card-a)
       (card-with-source-table (str "card__" (u/get-id card-c))))))
-
-(expect
-  #{"/db/0/"}
-  (tt/with-temp* [Card [card-a (card-with-source-table (data/id :venues))]
-                  Card [card-b (card-with-source-table (str "card__" (u/get-id card-a)))]
-                  Card [card-c (card-with-source-table (str "card__" (u/get-id card-b)))]]
-    ;; force Card A to reference Card C
-    (force-update-card-to-reference-source-table! card-a (str "card__" (u/get-id card-c)))
-    ;; perms calc should fail and we should get admin-only perms
-    (#'card/card-perms-set-taking-collection-etc-into-account (Card (u/get-id card-a)) :read)))
-
-
-;;; ---------------------------------------------- Updating Read Perms -----------------------------------------------
-
-;; Make sure when saving a new Card read perms get calculated
-(expect
-  #{(format "/db/%d/native/read/" (data/id))}
-  (tt/with-temp Card [card {:dataset_query {:database (data/id)
-                                            :type     :native
-                                            :native   {:query "SELECT 1"}}}]
-    ;; read_permissions should have been populated
-    (db/select-one-field :read_permissions Card :id (u/get-id card))))
-
-;; Make sure when updating a Card's query read perms get updated
-(expect
-  #{(format "/db/%d/schema/PUBLIC/table/%d/" (data/id) (data/id :venues))}
-  (tt/with-temp Card [card {:dataset_query {:database (data/id)
-                                            :type     :native
-                                            :native   {:query "SELECT 1"}}}]
-    ;; now change the query...
-    (db/update! Card (u/get-id card) :dataset_query {:database (data/id)
-                                                     :type     :query
-                                                     :query    {:source-table (data/id :venues)}})
-    ;; read permissions should have been updated
-    (db/select-one-field :read_permissions Card :id (u/get-id card))))
-
-;; Make sure when updating a Card but not changing query read perms do not get changed
-(expect
-  #{(format "/db/%d/native/read/" (data/id))}
-  (tt/with-temp Card [card {:dataset_query {:database (data/id)
-                                            :type     :native
-                                            :native   {:query "SELECT 1"}}}]
-    ;; now change something *besides* the query...
-    (db/update! Card (u/get-id card) :name "Cam's super-awesome CARD")
-    ;; read permissions should *not* have been updated
-    (db/select-one-field :read_permissions Card :id (u/get-id card))))

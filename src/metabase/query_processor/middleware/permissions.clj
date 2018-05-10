@@ -30,7 +30,8 @@
   (when *current-user-id*
     (if card-id
       (check-card-read-perms card-id)
-      (check-ad-hoc-query-perms outer-query))))
+      (check-ad-hoc-query-perms outer-query)))
+  outer-query)
 
 (defn check-query-permissions
   "Middleware that check that the current user has permissions to run the current query. This only applies if

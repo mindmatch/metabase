@@ -103,9 +103,9 @@
   "Return the permissions path for a Database, schema, or Table."
   ([database-or-id :- MapOrID]
    (str "/db/" (u/get-id database-or-id) "/"))
-  ([database-or-id :- MapOrID, schema-name :- (s/maybe su/NonBlankString)]
+  ([database-or-id :- MapOrID, schema-name :- (s/maybe s/Str)]
    (str (object-path database-or-id) "schema/" schema-name "/"))
-  ([database-or-id :- MapOrID, schema-name :- (s/maybe su/NonBlankString), table-or-id :- MapOrID]
+  ([database-or-id :- MapOrID, schema-name :- (s/maybe s/Str), table-or-id :- MapOrID]
    (str (object-path database-or-id schema-name) "table/" (u/get-id table-or-id) "/" )))
 
 (s/defn adhoc-native-query-path :- ObjectPath
